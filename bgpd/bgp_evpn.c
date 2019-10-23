@@ -103,6 +103,11 @@ static const char *vxlan_flood_control_str(enum vxlan_flood_control flood_ctrl)
 	}
 }
 
+static int bgp_evpn_update_vpn_route_attribute(struct bgp *bgp, struct bgpevpn *vpn,
+					       struct bgp_dest *rn, const struct prefix_evpn *evp,
+					       struct bgp_path_info *pi,
+					       struct bgp_path_info **new_pi);
+
 /*
  * Private functions.
  */
@@ -4659,7 +4664,7 @@ static void update_advertise_vni_route(struct bgp *bgp, struct bgpevpn *vpn,
 				       struct bgp_dest *dest)
 {
 	struct bgp_dest *global_dest;
-	struct bgp_path_info *pi, *global_pi;
+	struct bgp_path_info *pi, *global_pi, *tmp_pi;
 	struct attr *attr;
 	afi_t afi = AFI_L2VPN;
 	safi_t safi = SAFI_EVPN;
@@ -4704,6 +4709,15 @@ static void update_advertise_vni_route(struct bgp *bgp, struct bgpevpn *vpn,
 	 * attribute.
 	 */
 	attr = pi->attr;
+	/*
+	 * For Self type-2 route build nexthop field due to router-id
+	 * change.
+	 */
+	if (CHECK_FLAG(pi->extra->evpn->af_flags, BGP_EVPN_MACIP_TYPE_SVI_IP)) {
+		bgp_evpn_update_vpn_route_attribute(bgp, vpn, dest, &tmp_evp, pi, &tmp_pi);
+		attr = tmp_pi->attr;
+	}
+
 	global_dest = bgp_evpn_global_node_get(bgp->rib[afi][safi], afi, safi,
 					       &tmp_evp, &vpn->prd, NULL);
 	assert(global_dest);
@@ -8321,4 +8335,96 @@ static uint32_t bgp_evpn_addpath_id_for_path(const struct bgp *bgp, const struct
 		return 0;
 
 	return pi->tx_addpath.addpath_tx_id[BGP_ADDPATH_ALL];
+}
+
+/*
+ * Return true if the local ri for this rn is of type gateway mac
+ */
+static int evpn_route_is_def_gw(struct bgp *bgp, struct bgp_dest *rn)
+{
+	struct bgp_path_info *local_pi;
+
+	local_pi = bgp_evpn_route_get_local_path(bgp, rn, 0);
+	if (!local_pi)
+		return 0;
+
+	return CHECK_FLAG(local_pi->attr->evpn_flags, ATTR_EVPN_FLAG_DEFAULT_GW);
+}
+
+/*
+ * Return true if the local ri for this rn has sticky set
+ */
+static int evpn_route_is_sticky(struct bgp *bgp, struct bgp_dest *rn)
+{
+	struct bgp_path_info *local_pi;
+
+	local_pi = bgp_evpn_route_get_local_path(bgp, rn, 0);
+	if (!local_pi)
+		return 0;
+
+	return CHECK_FLAG(local_pi->attr->evpn_flags, ATTR_EVPN_FLAG_STICKY);
+}
+
+static int bgp_evpn_update_vpn_route_attribute(struct bgp *bgp, struct bgpevpn *vpn,
+					       struct bgp_dest *rn, const struct prefix_evpn *evp,
+					       struct bgp_path_info *pi,
+					       struct bgp_path_info **new_pi)
+{
+	struct attr attr_new;
+	uint32_t seq;
+	int add_l3_ecomm = 0;
+	afi_t afi = AFI_L2VPN;
+	safi_t safi = SAFI_EVPN;
+	int route_changed;
+	struct ecommunity *macvrf_soo = NULL;
+
+	bgp_attr_default_set(&attr_new, bgp, BGP_ORIGIN_IGP);
+	if (IS_IPADDR_V4(&vpn->originator_ip)) {
+		attr_new.nexthop = vpn->originator_ip.ipaddr_v4;
+		attr_new.mp_nexthop_global_in = vpn->originator_ip.ipaddr_v4;
+		attr_new.mp_nexthop_len = BGP_ATTR_NHLEN_IPV4;
+	} else {
+		IPV6_ADDR_COPY(&attr_new.mp_nexthop_global, &vpn->originator_ip.ipaddr_v6);
+		attr_new.mp_nexthop_len = BGP_ATTR_NHLEN_IPV6_GLOBAL;
+	}
+
+	bgp_evpn_get_rmac_nexthop(vpn, evp, &attr_new, pi->extra->evpn->af_flags);
+
+	if (evpn_route_is_sticky(bgp, rn))
+		SET_FLAG(attr_new.evpn_flags, ATTR_EVPN_FLAG_STICKY);
+	else if (evpn_route_is_def_gw(bgp, rn)) {
+		SET_FLAG(attr_new.evpn_flags, ATTR_EVPN_FLAG_DEFAULT_GW);
+		if (is_evpn_prefix_ipaddr_v6(evp))
+			SET_FLAG(attr_new.evpn_flags, ATTR_EVPN_FLAG_ROUTER);
+	}
+
+	/* Add L3 VNI RTs and RMAC for non IPv6 link-local if
+	 * using L3 VNI for type-2 routes also.
+	 */
+	if ((is_evpn_prefix_ipaddr_v4(evp) ||
+	     !IN6_IS_ADDR_LINKLOCAL(&evp->prefix.macip_addr.ip.ipaddr_v6)) &&
+	    CHECK_FLAG(vpn->flags, VNI_FLAG_USE_TWO_LABELS) && bgpevpn_get_l3vni(vpn))
+		add_l3_ecomm = 1;
+
+	if (bgp->evpn_info)
+		macvrf_soo = bgp->evpn_info->soo;
+
+	/* Set up extended community. */
+	build_evpn_route_extcomm(vpn, &attr_new, add_l3_ecomm, macvrf_soo);
+
+	seq = mac_mobility_seqnum(pi->attr);
+
+	/* Update the route entry. */
+	route_changed = update_evpn_route_entry(bgp, vpn, afi, safi, rn, &attr_new, NULL, NULL, 0,
+						new_pi, 0, seq, true /* setup_sync */,
+						NULL /* old_is_sync */);
+
+	/* Unintern temporary. */
+	aspath_unintern(&attr_new.aspath);
+
+	if (bgp_debug_zebra(NULL))
+		zlog_debug("vni %u evp %pFX RMAC %pEA nexthop %pI4", vpn->vni, evp,
+			   &(*new_pi)->attr->rmac, &(*new_pi)->attr->mp_nexthop_global_in);
+
+	return route_changed;
 }
