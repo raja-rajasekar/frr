@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+//
 /*
  * Addpath TX ID selection, and related utilities
  * Copyright (C) 2018  Amazon.com, Inc. or its affiliates
@@ -13,7 +14,7 @@
 
 static const struct bgp_addpath_strategy_names strat_names[BGP_ADDPATH_MAX] = {
 	{
-		.config_name = "addpath-tx-all-paths",
+		.config_name = "addttpath-tx-all-paths",
 		.human_name = "All",
 		.human_description = "Advertise all paths via addpath",
 		.type_json_name = "addpathTxAllPaths",
