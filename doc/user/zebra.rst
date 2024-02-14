@@ -1440,6 +1440,9 @@ FPM Commands
            User FPM configurations: 1
          User FPM disable requests: 0
 
+.. clicmd:: show fpm status [json]
+
+   Show the FPM status.
 
 .. clicmd:: clear fpm counters
 
