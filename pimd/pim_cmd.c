@@ -290,6 +290,7 @@ static void igmp_show_interfaces(struct pim_instance *pim, struct vty *vty,
 	char buf[PREFIX_STRLEN];
 	json_object *json = NULL;
 	json_object *json_row = NULL;
+	time_t epoch_tbuf;
 
 	now = pim_time_monotonic_sec();
 
@@ -314,6 +315,8 @@ static void igmp_show_interfaces(struct pim_instance *pim, struct vty *vty,
 			char uptime[10];
 			char query_hhmmss[10];
 
+			epoch_tbuf =
+				time_to_epoch(UPTIMESECS(igmp->sock_creation));
 			pim_time_uptime(uptime, sizeof(uptime),
 					now - igmp->sock_creation);
 			pim_time_timer_to_hhmmss(query_hhmmss,
@@ -323,6 +326,8 @@ static void igmp_show_interfaces(struct pim_instance *pim, struct vty *vty,
 			if (uj) {
 				json_row = json_object_new_object();
 				json_object_pim_ifp_add(json_row, ifp);
+				json_object_int_add(json_row, "igmpUptimeEpoch",
+						    epoch_tbuf);
 				json_object_string_add(json_row, "upTime",
 						       uptime);
 				json_object_int_add(json_row, "version",
@@ -389,6 +394,7 @@ static void igmp_show_interfaces_single(struct pim_instance *pim,
 	long qri_msec;
 	time_t now;
 	int lmqc;
+	time_t epoch_tbuf;
 
 	json_object *json = NULL;
 	json_object *json_row = NULL;
@@ -412,6 +418,8 @@ static void igmp_show_interfaces_single(struct pim_instance *pim,
 			found_ifname = 1;
 			pim_time_uptime(uptime, sizeof(uptime),
 					now - igmp->sock_creation);
+			epoch_tbuf =
+				time_to_epoch(UPTIMESECS(igmp->sock_creation));
 			pim_time_timer_to_hhmmss(query_hhmmss,
 						 sizeof(query_hhmmss),
 						 igmp->t_igmp_query_timer);
@@ -449,6 +457,8 @@ static void igmp_show_interfaces_single(struct pim_instance *pim,
 			if (uj) {
 				json_row = json_object_new_object();
 				json_object_pim_ifp_add(json_row, ifp);
+				json_object_int_add(json_row, "igmpUptimeEpoch",
+						    epoch_tbuf);
 				json_object_string_add(json_row, "upTime",
 						       uptime);
 				json_object_string_add(json_row, "querier",
