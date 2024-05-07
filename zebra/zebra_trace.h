@@ -232,7 +232,7 @@ TRACEPOINT_EVENT(
 TRACEPOINT_LOGLEVEL(frr_zebra, if_upd_ctx, TRACE_INFO)
 
 /*
- * Loc 0 -> DPLANE_OP_INTF_DELETE 
+ * Loc 0 -> DPLANE_OP_INTF_DELETE
  * Loc 1 -> DPLANE_OP_INTF_UPDATE
  */
 TRACEPOINT_EVENT(
@@ -2014,7 +2014,7 @@ TRACEPOINT_EVENT(
    )
 TRACEPOINT_LOGLEVEL(frr_zebra, gr_delete_stale_route, TRACE_INFO)
 
-/* 
+/*
  * LOC1: RE updated
  * LOC2: RE NOT install
  */
