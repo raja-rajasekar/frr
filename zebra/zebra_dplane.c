@@ -7793,6 +7793,11 @@ static void dplane_thread_loop(struct event *event)
 			zlog_debug("dplane dequeues %d completed work from provider %s",
 				   counter, dplane_provider_get_name(prov));
 
+		if (event_should_yield(event)) {
+			reschedule = true;
+			break;
+		}
+
 		/* Locate next provider */
 		prov = next_prov;
 	}
