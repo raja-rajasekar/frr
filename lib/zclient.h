@@ -47,6 +47,11 @@ typedef uint16_t zebra_size_t;
 #define ZEBRA_MAX_PACKET_SIZ          16384U
 #define ZEBRA_SMALL_PACKET_SIZE       200U
 
+/* Only for L2/L3 VNI Add/Del */
+#define ZEBRA_VNI_MAX_PACKET_SIZE   80U
+#define ZEBRA_VNI_SMALL_PACKET_SIZE 50U
+#define ZEBRA_VNI_MIN_PACKET_SIZE   25U
+
 /* Zebra header size. */
 #define ZEBRA_HEADER_SIZE             10
 

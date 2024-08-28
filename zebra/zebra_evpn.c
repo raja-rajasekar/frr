@@ -1140,7 +1140,7 @@ int zebra_evpn_send_add_to_client(struct zebra_evpn *zevpn)
 
 	svi_index = zevpn->svi_if ? zevpn->svi_if->ifindex : 0;
 
-	s = stream_new(ZEBRA_SMALL_PACKET_SIZE);
+	s = stream_new(ZEBRA_VNI_SMALL_PACKET_SIZE);
 
 	zclient_create_header(s, ZEBRA_VNI_ADD, zebra_vrf_get_evpn_id());
 	stream_putl(s, zevpn->vni);
@@ -1192,7 +1192,7 @@ int zebra_evpn_send_del_to_client(struct zebra_evpn *zevpn)
 		zebra_evpn_update_all_es(zevpn);
 	}
 
-	s = stream_new(ZEBRA_SMALL_PACKET_SIZE);
+	s = stream_new(ZEBRA_VNI_MIN_PACKET_SIZE);
 	stream_reset(s);
 
 	zclient_create_header(s, ZEBRA_VNI_DEL, zebra_vrf_get_evpn_id());
