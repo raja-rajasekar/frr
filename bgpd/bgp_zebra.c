@@ -3041,6 +3041,29 @@ void bgp_zebra_process_remote_routes_for_l2vni(struct event *e)
 				     NULL, 20, &bm->t_bgp_zebra_l2_vni);
 }
 
+void bgp_zebra_process_remote_routes_for_l3vrf(struct event *e)
+{
+	/*
+	 * Install/Uninstall all remote routes belonging to l3vni
+	 *
+	 * NOTE: At this point it does not matter if we pass install as true
+	 * or false since we pass struct bgp as NULL, we iterate the bm
+	 * FIFO list and take action based on the ADD/DELETE flags.
+	 */
+	install_uninstall_routes_for_vrf(NULL, true);
+
+	/*
+	 * Schedule pending remote installs if there are BGP-VRFs still pending
+	 * to be processed after a small sleep so that CPU is used for other
+	 * purposes.
+	 */
+	if (zebra_l3_vni_count(&bm->zebra_l3_vni_head)) {
+		event_add_timer_msec(bm->master,
+				     bgp_zebra_process_remote_routes_for_l3vrf,
+				     NULL, 20, &bm->t_bgp_zebra_l3_vni);
+	}
+}
+
 static int bgp_zebra_process_local_es_add(ZAPI_CALLBACK_ARGS)
 {
 	esi_t esi;

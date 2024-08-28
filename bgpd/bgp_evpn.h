@@ -197,4 +197,5 @@ evpn_zebra_uninstall(struct bgp *bgp, struct bgpevpn *vpn,
 		     bool is_sync);
 extern int install_uninstall_routes_for_vni(struct bgp *bgp,
 					    struct bgpevpn *vpn, bool install);
+extern int install_uninstall_routes_for_vrf(struct bgp *bgp_vrf, bool install);
 #endif /* _QUAGGA_BGP_EVPN_H */

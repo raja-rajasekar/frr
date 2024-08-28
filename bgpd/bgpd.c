@@ -3939,8 +3939,10 @@ int bgp_delete(struct bgp *bgp)
 	struct bgp_dest *dest_next = NULL;
 	struct bgp_table *dest_table = NULL;
 	struct graceful_restart_info *gr_info;
-	uint32_t b_ann_cnt = 0, b_l2_cnt = 0;
-	uint32_t a_ann_cnt = 0, a_l2_cnt = 0;
+	uint32_t b_ann_cnt = 0, b_l2_cnt = 0, b_l3_cnt = 0;
+	uint32_t a_ann_cnt = 0, a_l2_cnt = 0, a_l3_cnt = 0;
+	struct bgp *bgp_to_proc = NULL;
+	struct bgp *bgp_to_proc_next = NULL;
 
 	assert(bgp);
 
@@ -3974,14 +3976,26 @@ int bgp_delete(struct bgp *bgp)
 		}
 	}
 
+	/* Pop L3VNI/BGP_VRF yet to be processed for remote routes install */
+	b_l3_cnt = zebra_l3_vni_count(&bm->zebra_l3_vni_head);
+	for (bgp_to_proc = zebra_l3_vni_first(&bm->zebra_l3_vni_head);
+	     bgp_to_proc; bgp_to_proc = bgp_to_proc_next) {
+		bgp_to_proc_next = zebra_l3_vni_next(&bm->zebra_l3_vni_head,
+						     bgp_to_proc);
+		if (bgp_to_proc == bgp)
+			zebra_l3_vni_del(&bm->zebra_l3_vni_head, bgp_to_proc);
+	}
+
 	if (BGP_DEBUG(zebra, ZEBRA)) {
 		a_ann_cnt = zebra_announce_count(&bm->zebra_announce_head);
 		a_l2_cnt = zebra_l2_vni_count(&bm->zebra_l2_vni_head);
+		a_l3_cnt = zebra_l3_vni_count(&bm->zebra_l3_vni_head);
 		zlog_debug("FIFO Cleanup Count during BGP %s deletion :: "
 			   "Zebra Announce - before %u after %u :: "
-			   "BGP L2_VNI - before %u after %u",
+			   "BGP L2_VNI - before %u after %u :: "
+			   "BGP L3_VNI - before %u after %u",
 			   bgp->name_pretty, b_ann_cnt, a_ann_cnt, b_l2_cnt,
-			   a_l2_cnt);
+			   a_l2_cnt, b_l3_cnt, a_l3_cnt);
 	}
 
 	bgp_soft_reconfig_table_task_cancel(bgp, NULL, NULL);
@@ -8468,6 +8482,7 @@ void bgp_master_init(struct event_loop *master, const int buffer_size,
 	bm->t_bgp_start_label_manager = NULL;
 	bm->t_bgp_zebra_route = NULL;
 	bm->t_bgp_zebra_l2_vni = NULL;
+	bm->t_bgp_zebra_l3_vni = NULL;
 	bm->restart_time = BGP_DEFAULT_RESTART_TIME;
 	bm->stalepath_time = BGP_DEFAULT_STALEPATH_TIME;
 	bm->select_defer_time = BGP_DEFAULT_SELECT_DEFERRAL_TIME;
@@ -8725,6 +8740,7 @@ void bgp_terminate(void)
 	EVENT_OFF(bm->t_bgp_start_label_manager);
 	EVENT_OFF(bm->t_bgp_zebra_route);
 	EVENT_OFF(bm->t_bgp_zebra_l2_vni);
+	EVENT_OFF(bm->t_bgp_zebra_l3_vni);
 
 	bgp_mac_finish();
 }

@@ -79,6 +79,8 @@ static void bgp_evpn_remote_ip_hash_unlink_nexthop(struct hash_bucket *bucket,
 						   void *args);
 static struct in_addr zero_vtep_ip;
 
+static void bgp_evpn_local_l3vni_del_post_processing(struct bgp *bgp_vrf);
+
 /*
  * Private functions.
  */
@@ -3867,14 +3869,6 @@ int bgp_evpn_route_entry_install_if_vrf_match(struct bgp *bgp_vrf,
 	const struct prefix_evpn *evp =
 		(const struct prefix_evpn *)bgp_dest_get_prefix(pi->net);
 
-	/* Consider "valid" remote routes applicable for
-	 * this VRF.
-	 */
-	if (!(CHECK_FLAG(pi->flags, BGP_PATH_VALID)
-	      && pi->type == ZEBRA_ROUTE_BGP
-	      && pi->sub_type == BGP_ROUTE_NORMAL))
-		return 0;
-
 	if (is_route_matching_for_vrf(bgp_vrf, pi)) {
 		if (bgp_evpn_route_rmac_self_check(bgp_vrf, evp, pi))
 			return 0;
@@ -3905,7 +3899,8 @@ int bgp_evpn_route_entry_install_if_vrf_match(struct bgp *bgp_vrf,
  * Install or uninstall mac-ip routes are appropriate for this
  * particular VRF.
  */
-static int install_uninstall_routes_for_vrf(struct bgp *bgp_vrf, bool install)
+#define BGP_PROC_L3VNI_LIMIT 10
+int install_uninstall_routes_for_vrf(struct bgp *bgp_vrf, bool install)
 {
 	afi_t afi;
 	safi_t safi;
@@ -3914,6 +3909,12 @@ static int install_uninstall_routes_for_vrf(struct bgp *bgp_vrf, bool install)
 	struct bgp_path_info *pi;
 	int ret;
 	struct bgp *bgp_evpn = NULL;
+	uint32_t count = 0;
+	int final_ret = 0;
+	uint8_t vni_iter = 0;
+	bool is_install = false;
+	struct bgp *bgp_to_proc = NULL;
+	struct bgp *bgp_to_proc_next = NULL;
 
 	afi = AFI_L2VPN;
 	safi = SAFI_EVPN;
@@ -3937,28 +3938,93 @@ static int install_uninstall_routes_for_vrf(struct bgp *bgp_vrf, bool install)
 				(const struct prefix_evpn *)bgp_dest_get_prefix(
 					dest);
 
-			/* if not mac-ip route skip this route */
-			if (!(evp->prefix.route_type == BGP_EVPN_MAC_IP_ROUTE
-			      || evp->prefix.route_type
-					 == BGP_EVPN_IP_PREFIX_ROUTE))
+			/* Proceed only for MAC_IP/IP-Pfx routes */
+			switch (evp->prefix.route_type) {
+			case BGP_EVPN_IP_PREFIX_ROUTE:
+			case BGP_EVPN_MAC_IP_ROUTE:
+				if (!(is_evpn_prefix_ipaddr_v4(evp) ||
+				      is_evpn_prefix_ipaddr_v6(evp)))
+					continue;
+				break;
+			default:
 				continue;
-
-			/* if not a mac+ip route skip this route */
-			if (!(is_evpn_prefix_ipaddr_v4(evp)
-			      || is_evpn_prefix_ipaddr_v6(evp)))
-				continue;
+			}
 
 			for (pi = bgp_dest_get_bgp_path_info(dest); pi;
 			     pi = pi->next) {
-				ret = bgp_evpn_route_entry_install_if_vrf_match(
-					bgp_vrf, pi, install);
-				if (ret) {
-					bgp_dest_unlock_node(rd_dest);
-					bgp_dest_unlock_node(dest);
-					return ret;
+				/* Consider "valid" remote routes applicable for
+				 * this VRF */
+				if (!(CHECK_FLAG(pi->flags, BGP_PATH_VALID) &&
+				      pi->type == ZEBRA_ROUTE_BGP &&
+				      pi->sub_type == BGP_ROUTE_NORMAL))
+					continue;
+
+				if (!bgp_vrf) {
+					vni_iter = 0;
+					for (bgp_to_proc = zebra_l3_vni_first(
+						     &bm->zebra_l3_vni_head);
+					     bgp_to_proc &&
+					     vni_iter < BGP_PROC_L3VNI_LIMIT;
+					     bgp_to_proc = bgp_to_proc_next,
+					    vni_iter++) {
+						bgp_to_proc_next = zebra_l3_vni_next(
+							&bm->zebra_l3_vni_head,
+							bgp_to_proc);
+						is_install = false;
+						if (CHECK_FLAG(bgp_to_proc->flags,
+							       BGP_FLAG_L3VNI_SCHEDULE_FOR_INSTALL))
+							is_install = true;
+
+						ret = bgp_evpn_route_entry_install_if_vrf_match(
+							bgp_to_proc, pi,
+							is_install);
+						if (ret)
+							final_ret = ret;
+
+						uint32_t vni_cnt = zebra_l3_vni_count(
+							&bm->zebra_l3_vni_head);
+						zlog_debug("RAJA bgp-%s %s for L3VNI %u processed"
+							   " %u BEFORE vni_count  %u",
+							   bgp_to_proc->name_pretty,
+							   is_install
+								   ? "installing"
+								   : "uninstalling",
+							   bgp_to_proc->l3vni,
+							   vni_iter, vni_cnt);
+					}
+				} else {
+					ret = bgp_evpn_route_entry_install_if_vrf_match(
+						bgp_vrf, pi, install);
+					if (ret) {
+						bgp_dest_unlock_node(rd_dest);
+						bgp_dest_unlock_node(dest);
+						return ret;
+					}
 				}
 			}
 		}
+	}
+
+	if (!bgp_vrf) {
+		while (count < BGP_PROC_L3VNI_LIMIT) {
+			bgp_to_proc = zebra_l3_vni_pop(&bm->zebra_l3_vni_head);
+
+			if (!bgp_to_proc)
+				return final_ret;
+
+			if (CHECK_FLAG(bgp_to_proc->flags,
+				       BGP_FLAG_L3VNI_SCHEDULE_FOR_DELETE))
+				bgp_evpn_local_l3vni_del_post_processing(
+					bgp_to_proc);
+
+			UNSET_FLAG(bgp_to_proc->flags,
+				   BGP_FLAG_L3VNI_SCHEDULE_FOR_INSTALL);
+			UNSET_FLAG(bgp_to_proc->flags,
+				   BGP_FLAG_L3VNI_SCHEDULE_FOR_DELETE);
+			count++;
+		}
+
+		return final_ret;
 	}
 
 	return 0;
@@ -6876,6 +6942,50 @@ static void link_l2vni_hash_to_l3vni(struct hash_bucket *bucket,
 		bgpevpn_link_to_l3vni(vpn);
 }
 
+static void bgp_evpn_l3vni_remote_route_processing(struct bgp *bgp, bool install)
+{
+	/*
+	 * Anytime BGP gets a L3 VNI ADD/DEL from zebra,
+	 *  - Walking the entire global routing table per VNI is very expensive.
+	 *  - The next read (say of another VNI ADD/DEL) from the socket does
+	 *    not proceed unless this walk is complete. This results in huge
+	 * output buffer FIFO growth spiking up the memory in zebra.
+	 *
+	 * To avoid this, idea is to hookup the BGP-VRF off the struct bm and
+	 * maintain a struct bgp FIFO list which is processed later on, where we
+	 * walk a chunk of BGP-VRFs and do the remote route install/uninstall.
+	 */
+	if (!CHECK_FLAG(bgp->flags, BGP_FLAG_L3VNI_SCHEDULE_FOR_INSTALL) &&
+	    !CHECK_FLAG(bgp->flags, BGP_FLAG_L3VNI_SCHEDULE_FOR_DELETE))
+		zebra_l3_vni_add_tail(&bm->zebra_l3_vni_head, bgp);
+
+	if (install) {
+		SET_FLAG(bgp->flags, BGP_FLAG_L3VNI_SCHEDULE_FOR_INSTALL);
+		UNSET_FLAG(bgp->flags, BGP_FLAG_L3VNI_SCHEDULE_FOR_DELETE);
+	} else {
+		SET_FLAG(bgp->flags, BGP_FLAG_L3VNI_SCHEDULE_FOR_DELETE);
+		UNSET_FLAG(bgp->flags, BGP_FLAG_L3VNI_SCHEDULE_FOR_INSTALL);
+	}
+
+	if (BGP_DEBUG(zebra, ZEBRA))
+		zlog_debug("Scheduling L3VNI %s to be processed later for %s VNI %u",
+			   install ? "ADD" : "DEL", bgp->name_pretty,
+			   bgp->l3vni);
+	/*
+	 * If there are no BGP-VRFs's in the bm L3VNI FIFO list, schedule the
+	 * remote route install immediately.
+	 * Else schedule the remote route install after a small sleep.
+	 */
+	if (zebra_l3_vni_count(&bm->zebra_l3_vni_head))
+		event_add_timer_msec(bm->master,
+				     bgp_zebra_process_remote_routes_for_l3vrf,
+				     NULL, 20, &bm->t_bgp_zebra_l3_vni);
+	else
+		event_add_event(bm->master,
+				bgp_zebra_process_remote_routes_for_l3vrf, NULL,
+				0, &bm->t_bgp_zebra_l3_vni);
+}
+
 int bgp_evpn_local_l3vni_add(vni_t l3vni, vrf_id_t vrf_id,
 			     struct ethaddr *svi_rmac,
 			     struct ethaddr *vrr_rmac,
@@ -7021,11 +7131,57 @@ int bgp_evpn_local_l3vni_add(vni_t l3vni, vrf_id_t vrf_id,
 	/* advertise type-5 routes if needed */
 	update_advertise_vrf_routes(bgp_vrf);
 
-	/* install all remote routes belonging to this l3vni into correspondng
-	 * vrf */
-	install_routes_for_vrf(bgp_vrf);
+	bgp_evpn_l3vni_remote_route_processing(bgp_vrf, true);
 
 	return 0;
+}
+
+static void bgp_evpn_local_l3vni_del_post_processing(struct bgp *bgp_vrf)
+{
+	struct bgp *bgp_evpn = NULL; /* EVPN bgp instance */
+
+	bgp_evpn = bgp_get_evpn();
+	if (!bgp_evpn) {
+		flog_err(EC_BGP_NO_DFLT,
+			 "Cannot process L3VNI %u Del - Could not find EVPN BGP instance",
+			 bgp_vrf->l3vni);
+		return;
+	}
+
+	if (CHECK_FLAG(bgp_evpn->flags, BGP_FLAG_DELETE_IN_PROGRESS)) {
+		flog_err(EC_BGP_NO_DFLT,
+			 "Cannot process L3VNI %u ADD - EVPN BGP instance is shutting down",
+			 bgp_vrf->l3vni);
+		return;
+	}
+
+	/* Tunnel is no longer active.
+	 * Delete VTEP-IP from EVPN underlay's tip_hash.
+	 */
+	bgp_tip_del(bgp_evpn, &bgp_vrf->originator_ip);
+
+	/* remove the l3vni from vrf instance */
+	bgp_vrf->l3vni = 0;
+	memset(&bgp_vrf->rmac, 0, sizeof(struct ethaddr));
+
+	/* remove default import RT or Unmap non-default import RT */
+	if (!list_isempty(bgp_vrf->vrf_import_rtl)) {
+		bgp_evpn_unmap_vrf_from_its_rts(bgp_vrf);
+		if (!CHECK_FLAG(bgp_vrf->vrf_flags, BGP_VRF_IMPORT_RT_CFGD))
+			list_delete_all_node(bgp_vrf->vrf_import_rtl);
+	}
+
+	/* remove default export RT */
+	if (!list_isempty(bgp_vrf->vrf_export_rtl) &&
+	    !CHECK_FLAG(bgp_vrf->vrf_flags, BGP_VRF_EXPORT_RT_CFGD)) {
+		list_delete_all_node(bgp_vrf->vrf_export_rtl);
+	}
+
+	/* Delete the instance if it was autocreated */
+	if (CHECK_FLAG(bgp_vrf->vrf_flags, BGP_VRF_AUTO))
+		bgp_delete(bgp_vrf);
+
+	return;
 }
 
 int bgp_evpn_local_l3vni_del(vni_t l3vni, vrf_id_t vrf_id)
@@ -7060,13 +7216,6 @@ int bgp_evpn_local_l3vni_del(vni_t l3vni, vrf_id_t vrf_id)
 			  l3vni);
 		return -1;
 	}
-
-	/* Remove remote routes from BGT VRF even if BGP_VRF_AUTO is configured,
-	 * bgp_delete would not remove/decrement bgp_path_info of the ip_prefix
-	 * routes. This will uninstalling the routes from zebra and decremnt the
-	 * bgp info count.
-	 */
-	uninstall_routes_for_vrf(bgp_vrf);
 
 	/* delete/withdraw all type-5 routes */
 	delete_withdraw_vrf_routes(bgp_vrf);
@@ -7113,9 +7262,16 @@ int bgp_evpn_local_l3vni_del(vni_t l3vni, vrf_id_t vrf_id)
 
 	UNSET_FLAG(bgp_vrf->vrf_flags, BGP_VRF_L3VNI_PREFIX_ROUTES_ONLY);
 
-	/* Delete the instance if it was autocreated */
-	if (CHECK_FLAG(bgp_vrf->vrf_flags, BGP_VRF_AUTO))
-		bgp_delete(bgp_vrf);
+	/*
+	 * Queue removing remote routes from BGP VRF even if BGP_VRF_AUTO is
+	 * configured. bgp_delete would not remove/decrement bgp_path_info of
+	 * the ip_prefix routes. This will uninstalling the routes from zebra
+	 * and decremnt the bgp info count.
+	 *
+	 * Once the BGP-VRF fifo item is processed, we proceed with the delete
+	 * post processing.
+	 */
+	bgp_evpn_l3vni_remote_route_processing(bgp_vrf, false);
 
 	return 0;
 }

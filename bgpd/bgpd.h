@@ -209,6 +209,7 @@ struct bgp_master {
 	/* To preserve ordering of processing of L2 VNIs in BGP */
 	struct zebra_l2_vni_head zebra_l2_vni_head;
 
+	struct event *t_bgp_zebra_l3_vni;
 	/* To preserve ordering of processing of BGP-VRFs for L3 VNIs */
 	struct zebra_l3_vni_head zebra_l3_vni_head;
 
@@ -559,7 +560,8 @@ struct bgp {
 #define BGP_FLAG_ENFORCE_FIRST_AS (1ULL << 36)
 #define BGP_FLAG_DYNAMIC_CAPABILITY (1ULL << 37)
 #define BGP_FLAG_VNI_DOWN		 (1ULL << 38)
-
+#define BGP_FLAG_L3VNI_SCHEDULE_FOR_INSTALL (1ULL << 39)
+#define BGP_FLAG_L3VNI_SCHEDULE_FOR_DELETE  (1ULL << 40)
 	/* BGP default address-families.
 	 * New peers inherit enabled afi/safis from bgp instance.
 	 */
