@@ -2141,8 +2141,13 @@ static void evpn_configure_import_rt(struct bgp *bgp, struct bgpevpn *vpn,
 	/* If the VNI is "live", we need to uninstall routes using the current
 	 * import RT(s) first before we update the import RT, and subsequently
 	 * install routes.
+     *
+	 * However if the VPN is not yet processed for remote route install,
+	 * simply update the vpn to point to new RT so that when the actual
+	 * remote route install from the VPN FIFO walk happens, it takes this
+	 * change into account and install with the new RT.
 	 */
-	if (is_vni_live(vpn))
+	if (is_vni_live(vpn) && !CHECK_FLAG(vpn->flags, VNI_FLAG_ADD))
 		bgp_evpn_uninstall_routes(bgp, vpn);
 
 	/* Cleanup the RT to VNI mapping and get rid of existing import RT. */
@@ -2158,7 +2163,7 @@ static void evpn_configure_import_rt(struct bgp *bgp, struct bgpevpn *vpn,
 	bgp_evpn_map_vni_to_its_rts(bgp, vpn);
 
 	/* Install routes that match new import RT */
-	if (is_vni_live(vpn))
+	if (is_vni_live(vpn) && !CHECK_FLAG(vpn->flags, VNI_FLAG_ADD))
 		bgp_evpn_install_routes(bgp, vpn);
 }
 
@@ -2174,7 +2179,7 @@ static void evpn_unconfigure_import_rt(struct bgp *bgp, struct bgpevpn *vpn,
 	/* Along the lines of "configure" except we have to reset to the
 	 * automatic value.
 	 */
-	if (is_vni_live(vpn))
+	if (is_vni_live(vpn) && !CHECK_FLAG(vpn->flags, VNI_FLAG_ADD))
 		bgp_evpn_uninstall_routes(bgp, vpn);
 
 	/* Cleanup the RT to VNI mapping and get rid of existing import RT. */
@@ -2215,7 +2220,7 @@ static void evpn_unconfigure_import_rt(struct bgp *bgp, struct bgpevpn *vpn,
 		bgp_evpn_map_vni_to_its_rts(bgp, vpn);
 
 	/* Install routes that match new import RT */
-	if (is_vni_live(vpn))
+	if (is_vni_live(vpn) && !CHECK_FLAG(vpn->flags, VNI_FLAG_ADD))
 		bgp_evpn_install_routes(bgp, vpn);
 }
 

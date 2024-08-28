@@ -195,4 +195,6 @@ extern enum zclient_send_status
 evpn_zebra_uninstall(struct bgp *bgp, struct bgpevpn *vpn,
 		     const struct prefix_evpn *p, struct bgp_path_info *pi,
 		     bool is_sync);
+extern int install_uninstall_routes_for_vni(struct bgp *bgp,
+					    struct bgpevpn *vpn, bool install);
 #endif /* _QUAGGA_BGP_EVPN_H */

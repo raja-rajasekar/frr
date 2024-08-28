@@ -53,8 +53,9 @@ struct bgpevpn {
 #define VNI_FLAG_RD_CFGD           0x4  /* RD is user configured. */
 #define VNI_FLAG_IMPRT_CFGD        0x8  /* Import RT is user configured */
 #define VNI_FLAG_EXPRT_CFGD        0x10 /* Export RT is user configured */
-#define VNI_FLAG_USE_TWO_LABELS    0x20 /* Attach both L2-VNI and L3-VNI if
-					   needed for this VPN */
+/* Attach both L2-VNI and L3-VNI if needed for this VPN */
+#define VNI_FLAG_USE_TWO_LABELS 0x20
+#define VNI_FLAG_ADD		0x40 /* L2VNI Add */
 
 	struct bgp *bgp_vrf; /* back pointer to the vrf instance */
 
