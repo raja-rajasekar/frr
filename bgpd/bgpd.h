@@ -19,6 +19,8 @@
 #include "asn.h"
 
 PREDECL_LIST(zebra_announce);
+PREDECL_LIST(zebra_l2_vni);
+PREDECL_LIST(zebra_l3_vni);
 
 /* For union sockunion.  */
 #include "queue.h"
@@ -202,6 +204,12 @@ struct bgp_master {
 
 	/* To preserve ordering of installations into zebra across all Vrfs */
 	struct zebra_announce_head zebra_announce_head;
+
+	/* To preserve ordering of processing of L2 VNIs in BGP */
+	struct zebra_l2_vni_head zebra_l2_vni_head;
+
+	/* To preserve ordering of processing of BGP-VRFs for L3 VNIs */
+	struct zebra_l3_vni_head zebra_l3_vni_head;
 
 	QOBJ_FIELDS;
 };
@@ -859,9 +867,13 @@ struct bgp {
 	/* BGP route flap dampening configuration */
 	struct bgp_damp_config damp[AFI_MAX][SAFI_MAX];
 
+	struct zebra_l3_vni_item zl3vni;
+
 	QOBJ_FIELDS;
 };
 DECLARE_QOBJ_TYPE(bgp);
+
+DECLARE_LIST(zebra_l3_vni, struct bgp, zl3vni);
 
 struct bgp_interface {
 #define BGP_INTERFACE_MPLS_BGP_FORWARDING (1 << 0)

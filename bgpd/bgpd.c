@@ -8424,6 +8424,8 @@ void bgp_master_init(struct event_loop *master, const int buffer_size,
 	bm = &bgp_master;
 
 	zebra_announce_init(&bm->zebra_announce_head);
+	zebra_l2_vni_init(&bm->zebra_l2_vni_head);
+	zebra_l3_vni_init(&bm->zebra_l3_vni_head);
 	bm->bgp = list_new();
 	bm->listen_sockets = list_new();
 	bm->port = BGP_PORT_DEFAULT;

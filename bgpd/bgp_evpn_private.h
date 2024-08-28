@@ -108,10 +108,14 @@ struct bgpevpn {
 	/* List of local ESs */
 	struct list *local_es_evi_list;
 
+	struct zebra_l2_vni_item zl2vni;
+
 	QOBJ_FIELDS;
 };
 
 DECLARE_QOBJ_TYPE(bgpevpn);
+
+DECLARE_LIST(zebra_l2_vni, struct bgpevpn, zl2vni);
 
 /* Mapping of Import RT to VNIs.
  * The Import RTs of all VNIs are maintained in a hash table with each
