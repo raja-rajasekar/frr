@@ -1993,6 +1993,7 @@ struct peer *peer_create(union sockunion *su, const char *conf_if,
 		SET_FLAG(peer->flags, PEER_FLAG_CONFIG_NODE);
 
 	(void)hash_get(bgp->peerhash, peer, hash_alloc_intern);
+	bf_assign_index(bgp->bgp_peer_id_bitmap, peer->bit_index);
 
 	/* Adjust update-group coalesce timer heuristics for # peers. */
 	if (bgp->heuristic_coalesce) {
@@ -2783,6 +2784,7 @@ int peer_delete(struct peer *peer)
 		 */
 		list_delete_node(bgp->peer, pn);
 		hash_release(bgp->peerhash, peer);
+		bf_release_index(bgp->bgp_peer_id_bitmap, peer->bit_index);
 		peer_unlock(peer); /* bgp peer list reference */
 	}
 
@@ -3569,6 +3571,9 @@ peer_init:
 	bgp->coalesce_time = BGP_DEFAULT_SUBGROUP_COALESCE_TIME;
 	bgp->default_af[AFI_IP][SAFI_UNICAST] = true;
 
+	bf_init(bgp->bgp_peer_id_bitmap, BGP_PEER_INIT_BITMAP_SIZE);
+	bf_assign_zero_index(bgp->bgp_peer_id_bitmap);
+
 	if (!hidden)
 		QOBJ_REG(bgp, bgp);
 
@@ -4189,6 +4194,8 @@ void bgp_free(struct bgp *bgp)
 
 	list_delete(&bgp->group);
 	list_delete(&bgp->peer);
+
+	bf_free(bgp->bgp_peer_id_bitmap);
 
 	if (bgp->peerhash) {
 		hash_free(bgp->peerhash);
