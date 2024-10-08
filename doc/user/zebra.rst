@@ -1839,6 +1839,10 @@ Debugging
 
    Nexthop and nexthop-group events.
 
+.. clicmd:: debug zebra srv6
+
+   Segment Routing for IPv6 dataplane debugging.
+
 Scripting
 =========
 
