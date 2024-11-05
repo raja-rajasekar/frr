@@ -3921,8 +3921,7 @@ void bgp_process_main_one(struct bgp *bgp, struct bgp_dest *dest, afi_t afi, saf
 				    (new_select->sub_type == BGP_ROUTE_NORMAL ||
 				     new_select->sub_type ==
 					     BGP_ROUTE_IMPORTED)) {
-					if (is_route_parent_evpn(old_select) ||
-						CHECK_FLAG(bgp->gr_info[afi][safi]
+					if (CHECK_FLAG(bgp->gr_info[afi][safi]
 							       .flags,
 						       BGP_GR_SKIP_BP))
 						bgp_zebra_announce_actual(dest, old_select, bgp);
