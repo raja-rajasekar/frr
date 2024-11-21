@@ -1874,12 +1874,9 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 {
 
 	char label_buf[256];
-	struct vrf *vrf;
 	char addrstr[INET6_ADDRSTRLEN];
 
 	assert(nexthop);
-
-	vrf = vrf_lookup_by_id(nexthop->vrf_id);
 
 	if (!_netlink_route_encode_label_info(nexthop, nlmsg, req_size, rtmsg,
 					      label_buf, sizeof(label_buf)))
@@ -2047,10 +2044,10 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 		}
 
 		if (IS_ZEBRA_DEBUG_KERNEL)
-			zlog_debug("%s: 5549 (%s): %pFX nexthop via %s %s if %u vrf %s(%u)",
+			zlog_debug("%s: 5549 (%s): %pFX nexthop via %s %s if %u vrf %u",
 				   __func__, routedesc, p, ipv4_ll_buf,
 				   label_buf, nexthop->ifindex,
-				   VRF_LOGNAME(vrf), nexthop->vrf_id);
+				   nexthop->vrf_id);
 		return true;
 	}
 
@@ -2073,10 +2070,9 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 		if (IS_ZEBRA_DEBUG_KERNEL) {
 			inet_ntop(AF_INET, &nexthop->gate.ipv4, addrstr,
 				  sizeof(addrstr));
-			zlog_debug("%s: (%s): %pFX nexthop via %s %s if %u vrf %s(%u)",
+			zlog_debug("%s: (%s): %pFX nexthop via %s %s if %u vrf %u",
 				   __func__, routedesc, p, addrstr, label_buf,
-				   nexthop->ifindex, VRF_LOGNAME(vrf),
-				   nexthop->vrf_id);
+				   nexthop->ifindex, nexthop->vrf_id);
 		}
 	}
 
@@ -2097,10 +2093,9 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 		if (IS_ZEBRA_DEBUG_KERNEL) {
 			inet_ntop(AF_INET6, &nexthop->gate.ipv6, addrstr,
 				  sizeof(addrstr));
-			zlog_debug("%s: (%s): %pFX nexthop via %s %s if %u vrf %s(%u)",
+			zlog_debug("%s: (%s): %pFX nexthop via %s %s if %u vrf %u",
 				   __func__, routedesc, p, addrstr, label_buf,
-				   nexthop->ifindex, VRF_LOGNAME(vrf),
-				   nexthop->vrf_id);
+				   nexthop->ifindex, nexthop->vrf_id);
 		}
 	}
 
@@ -2122,9 +2117,9 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 		}
 
 		if (IS_ZEBRA_DEBUG_KERNEL)
-			zlog_debug("%s: (%s): %pFX nexthop via if %u vrf %s(%u)",
+			zlog_debug("%s: (%s): %pFX nexthop via if %u vrf %u",
 				   __func__, routedesc, p, nexthop->ifindex,
-				   VRF_LOGNAME(vrf), nexthop->vrf_id);
+				   nexthop->vrf_id);
 	}
 
 	return true;
@@ -2175,7 +2170,6 @@ static bool _netlink_route_build_multipath(
 	struct rtmsg *rtmsg, const union g_addr **src, route_tag_t tag)
 {
 	char label_buf[256];
-	struct vrf *vrf;
 	struct rtnexthop *rtnh;
 
 	rtnh = nl_attr_rtnh(nlmsg, req_size);
@@ -2183,8 +2177,6 @@ static bool _netlink_route_build_multipath(
 		return false;
 
 	assert(nexthop);
-
-	vrf = vrf_lookup_by_id(nexthop->vrf_id);
 
 	if (!_netlink_route_encode_label_info(nexthop, nlmsg, req_size, rtmsg,
 					      label_buf, sizeof(label_buf)))
@@ -2208,10 +2200,9 @@ static bool _netlink_route_build_multipath(
 
 		if (IS_ZEBRA_DEBUG_KERNEL)
 			zlog_debug(
-				"%s: 5549 (%s): %pFX nexthop via %s %s if %u vrf %s(%u)",
+				"%s: 5549 (%s): %pFX nexthop via %s %s if %u vrf %u",
 				__func__, routedesc, p, ipv4_ll_buf, label_buf,
-				nexthop->ifindex, VRF_LOGNAME(vrf),
-				nexthop->vrf_id);
+				nexthop->ifindex, nexthop->vrf_id);
 		nl_attr_rtnh_end(nlmsg, rtnh);
 		return true;
 	}
@@ -2229,10 +2220,9 @@ static bool _netlink_route_build_multipath(
 			*src = &nexthop->src;
 
 		if (IS_ZEBRA_DEBUG_KERNEL)
-			zlog_debug("%s: (%s): %pFX nexthop via %pI4 %s if %u vrf %s(%u)",
+			zlog_debug("%s: (%s): %pFX nexthop via %pI4 %s if %u vrf %u",
 				   __func__, routedesc, p, &nexthop->gate.ipv4,
-				   label_buf, nexthop->ifindex,
-				   VRF_LOGNAME(vrf), nexthop->vrf_id);
+				   label_buf, nexthop->ifindex, nexthop->vrf_id);
 	}
 	if (nexthop->type == NEXTHOP_TYPE_IPV6
 	    || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX) {
@@ -2247,10 +2237,9 @@ static bool _netlink_route_build_multipath(
 			*src = &nexthop->src;
 
 		if (IS_ZEBRA_DEBUG_KERNEL)
-			zlog_debug("%s: (%s): %pFX nexthop via %pI6 %s if %u vrf %s(%u)",
+			zlog_debug("%s: (%s): %pFX nexthop via %pI6 %s if %u vrf %u",
 				   __func__, routedesc, p, &nexthop->gate.ipv6,
-				   label_buf, nexthop->ifindex,
-				   VRF_LOGNAME(vrf), nexthop->vrf_id);
+				   label_buf, nexthop->ifindex, nexthop->vrf_id);
 	}
 
 	/*
@@ -2269,9 +2258,9 @@ static bool _netlink_route_build_multipath(
 			*src = &nexthop->src;
 
 		if (IS_ZEBRA_DEBUG_KERNEL)
-			zlog_debug("%s: (%s): %pFX nexthop via if %u vrf %s(%u)",
+			zlog_debug("%s: (%s): %pFX nexthop via if %u vrf %u",
 				   __func__, routedesc, p, nexthop->ifindex,
-				   VRF_LOGNAME(vrf), nexthop->vrf_id);
+				   nexthop->vrf_id);
 	}
 
 	if (nexthop->weight)
