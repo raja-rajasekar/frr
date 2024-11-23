@@ -271,7 +271,9 @@ ctx_keywords = {
     },
     "router rip": {},
     "router ripng": {},
-    "router isis ": {},
+    "router isis ": {
+        "segment-routing srv6": {},
+    },
     "router openfabric ": {},
     "router ospf": {},
     "router ospf6": {},
