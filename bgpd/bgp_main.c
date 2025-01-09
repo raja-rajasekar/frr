@@ -50,6 +50,7 @@
 #include "bgpd/bgp_nhg.h"
 #include "bgpd/bgp_routemap_nb.h"
 #include "bgpd/bgp_community_alias.h"
+#include "bgpd/bgp_peer_nb.h"
 
 DEFINE_HOOK(bgp_hook_config_write_vrf, (struct vty *vty, struct vrf *vrf),
 	    (vty, vrf));
@@ -396,6 +397,7 @@ static const struct frr_yang_module_info *const bgpd_yang_modules[] = {
 	&frr_route_map_info,
 	&frr_vrf_info,
 	&frr_bgp_route_map_info,
+	&frr_bgp_peer_info,
 };
 
 /* clang-format off */

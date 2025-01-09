@@ -55,6 +55,8 @@ struct nb_yang_xpath {
 		 ? &__xpath->tags[__indx1].keys[__indx2]                       \
 		 : NULL)
 
+extern struct hash *subscr_cache_entries;
+
 /* Northbound events. */
 enum nb_event {
 	/*
@@ -1682,6 +1684,19 @@ extern void nb_terminate(void);
 
 extern void nb_oper_init(struct event_loop *loop);
 extern void nb_oper_terminate(void);
+
+/*
+ * Notify subscribed xpaths
+ */
+extern int nb_notify_subscriptions(void);
+
+/*
+ * Update subscription cache
+ */
+extern void nb_cache_subscriptions(struct event_loop *master, const char* xpath,
+                                   const char* action, uint32_t interval);
+
+extern void nb_show_subscription_cache(struct vty *vty);
 
 #ifdef __cplusplus
 }

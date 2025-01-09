@@ -3110,9 +3110,8 @@ DEFUN (show_config_running,
 	return show_one_daemon(vty, argv, argc - 1, argv[argc - 1]->text);
 }
 
-DEFUN (show_yang_operational_data,
-       show_yang_operational_data_cmd,
-       "show yang operational-data XPATH\
+DEFUN(show_yang_operational_data, show_yang_operational_data_cmd,
+      "show yang operational-data [XPATH]\
          [{\
 	   format <json|xml>\
 	   |translate WORD\
@@ -3132,6 +3131,7 @@ DEFUN (show_yang_operational_data,
 {
 	return show_one_daemon(vty, argv, argc - 1, argv[argc - 1]->text);
 }
+
 
 DEFUN(show_yang_module, show_yang_module_cmd,
       "show yang module [module-translator WORD] " DAEMONS_LIST,
@@ -4095,7 +4095,6 @@ DEFPY (no_vtysh_terminal_monitor,
 	}
 	return ret_all;
 }
-
 
 /* Execute command in child process. */
 static void execute_command(const char *command, int argc, const char *arg1,
