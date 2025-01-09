@@ -8905,27 +8905,64 @@ void bgp_process_maintenance_mode(struct vty *vty, bool enter)
 /*
  * Function to terminate peer threads and close peer socket.
  */
-void bgp_stop_peer_threads_and_close(struct peer *peer)
+static void bgp_stop_peer_threads_and_close(struct peer_connection *connection)
 {
-	/* Stop read and write threads. */
-	bgp_keepalives_off(peer);
-	bgp_writes_off(peer);
-	bgp_reads_off(peer);
+	struct peer *peer = connection->peer;
 
-	THREAD_OFF(peer->t_connect_check_r);
-	THREAD_OFF(peer->t_connect_check_w);
-	THREAD_OFF(peer->t_stop_with_notify);
+	/* Delete all existing events of the peer */
+	event_cancel_event_ready(bm->master, connection);
+
+	if (peer_established(connection)) {
+		/* Stop graceful restart stalepath timer */
+		EVENT_OFF(connection->t_gr_stale);
+		/* Stop route-refresh stalepath timer */
+		EVENT_OFF(peer->t_refresh_stalepath);
+
+		/*Remove peer from all update group*/
+		update_group_remove_peer_afs(peer);
+	}
+
+	/* stop keepalives */
+	bgp_keepalives_off(connection);
+
+	/* Stop read and write threads. */
+	bgp_writes_off(connection);
+	bgp_reads_off(connection);
+
+	EVENT_OFF(connection->t_connect_check_r);
+	EVENT_OFF(connection->t_connect_check_w);
+
+	EVENT_OFF(connection->t_stop_with_notify);
 
 	/* Stop all timers. */
-	THREAD_OFF(peer->t_start);
-	THREAD_OFF(peer->t_connect);
-	THREAD_OFF(peer->t_holdtime);
-	THREAD_OFF(peer->t_routeadv);
-	THREAD_OFF(peer->t_delayopen);
+	EVENT_OFF(connection->t_start);
+	EVENT_OFF(connection->t_connect);
+	EVENT_OFF(connection->t_holdtime);
+	EVENT_OFF(connection->t_routeadv);
+	EVENT_OFF(peer->connection->t_delayopen);
 
-	/*close socket and set to -1*/
-	close(peer->fd);
-	peer->fd = -1;
+	/* Clear input and output buffer.  */
+	frr_with_mutex (&connection->io_mtx) {
+		if (connection->ibuf)
+			stream_fifo_clean(connection->ibuf);
+		if (connection->obuf)
+			stream_fifo_clean(connection->obuf);
+
+		if (connection->ibuf_work)
+			ringbuf_wipe(connection->ibuf_work);
+
+		if (peer->curr) {
+			stream_free(peer->curr);
+			peer->curr = NULL;
+		}
+	}
+
+	/* Close of file descriptor. */
+	if (connection->fd >= 0) {
+		close(connection->fd);
+		connection->fd = -1;
+	}
+
 	return;
 }
 
@@ -8950,8 +8987,8 @@ void bgp_process_fast_down(bool upgrade)
 	 */
 	for (ALL_LIST_ELEMENTS(bm->bgp, mnode, mnnode, bgp))
 		for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer))
-			if (peer->fd >= 0) {
-				bgp_stop_peer_threads_and_close(peer);
+			if (peer->connection->fd >= 0) {
+				bgp_stop_peer_threads_and_close(peer->connection);
 			}
 	if (upgrade)
 		SET_FLAG(bm->flags, BM_FLAG_UPGRADE);
