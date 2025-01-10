@@ -3117,17 +3117,15 @@ DEFUN(show_yang_operational_data, show_yang_operational_data_cmd,
 	   |translate WORD\
 	   |with-config\
 	 }] " DAEMONS_LIST,
-       SHOW_STR
-       "YANG information\n"
-       "Show YANG operational data\n"
-       "XPath expression specifying the YANG data path\n"
-       "Set the output format\n"
-       "JavaScript Object Notation\n"
-       "Extensible Markup Language\n"
-       "Translate operational data\n"
-       "YANG module translator\n"
-       "Merge configuration data\n"
-       DAEMONS_STR)
+      SHOW_STR "YANG information\n"
+	       "Show YANG operational data\n"
+	       "XPath expression specifying the YANG data path\n"
+	       "Set the output format\n"
+	       "JavaScript Object Notation\n"
+	       "Extensible Markup Language\n"
+	       "Translate operational data\n"
+	       "YANG module translator\n"
+	       "Merge configuration data\n" DAEMONS_STR)
 {
 	return show_one_daemon(vty, argv, argc - 1, argv[argc - 1]->text);
 }

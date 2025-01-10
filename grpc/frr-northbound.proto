@@ -29,7 +29,7 @@ syntax = "proto3";
 
 package frr;
 
-option go_package =".";
+option go_package = ".";
 
 // Service specification for the FRR northbound interface.
 service Northbound {
@@ -41,7 +41,9 @@ service Northbound {
 
 
   // Subscribe
-  rpc Subscribe(SubscribeRequest) returns (SubscribeResponse) {}
+  rpc Subscribe(SubscribeRequest) returns (SubscribeResponse)
+  {
+  }
 
   // Create a new candidate configuration and return a reference to it. The
   // created candidate is a copy of the running configuration.
@@ -81,7 +83,9 @@ service Northbound {
   rpc UnlockConfig(UnlockConfigRequest) returns (UnlockConfigResponse) {}
 
   // Send Data
-  rpc SubscriptionCache(SubscriptionCacheRequest) returns (stream SubscriptionCacheResponse) {}
+  rpc SubscriptionCache(SubscriptionCacheRequest) returns (stream SubscriptionCacheResponse)
+  {
+  }
 
   // Execute a YANG RPC.
   rpc Execute(ExecuteRequest) returns (ExecuteResponse) {}
@@ -162,29 +166,34 @@ message CreateCandidateRequest {
   // Empty.
 }
 
-message SubscribeRequest {
-  oneof request {
-    SubscriptionList subscribe = 1;
-   // Poll poll = 3;
-  }
+message SubscribeRequest
+{
+	oneof request
+	{
+		SubscriptionList subscribe = 1;
+		// Poll poll = 3;
+	}
 }
 
-message SubscriptionList {
-  repeated Subscription subscriptions = 1;
-  //SamplingParams sampling_params = 2;
+message SubscriptionList
+{
+	repeated Subscription subscriptions = 1;
+	//SamplingParams sampling_params = 2;
 }
 
 //action = Add/Del/Update
-message Subscription {
-  string path = 1;
-  string action = 2;
-  string stream_mode = 3;
-  uint32 sample_interval = 4;
+message Subscription
+{
+	string path = 1;
+	string action = 2;
+	string stream_mode = 3;
+	uint32 sample_interval = 4;
 }
 
-message SubscribeResponse {
-  // Return values:
-  //grpc StatusCodes::OK: Success/ERROR
+message SubscribeResponse
+{
+	// Return values:
+	//grpc StatusCodes::OK: Success/ERROR
 }
 
 message CreateCandidateResponse {
@@ -456,12 +465,14 @@ message DataTree {
   string data = 2;
 }
 
-message SubscriptionCacheRequest {
-  // Paths requested by the client.
-  repeated string path = 1;
-  DataTree data = 2;
+message SubscriptionCacheRequest
+{
+	// Paths requested by the client.
+	repeated string path = 1;
+	DataTree data = 2;
 }
 
-message SubscriptionCacheResponse {
- // grpc StatusCodes::OK: Success/ERROR
+message SubscriptionCacheResponse
+{
+	// grpc StatusCodes::OK: Success/ERROR
 }

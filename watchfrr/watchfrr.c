@@ -356,15 +356,17 @@ static struct timeval *time_elapsed(struct timeval *result,
 
 /* This function will be called when bgpd or zebra
  * restarted*/
-static void reload_routing_telemetry_service(void) {
-    int ret = system("systemctl reload routing_telemetry.service");
-    if (ret == -1) {
-        zlog_err("Failed to exec systemctl reload routing_telemetry.service");
-    } else if (WEXITSTATUS(ret) != 0) {
-        zlog_err("Error occurred while reloading routing_telemetry.service, exit code: %d", WEXITSTATUS(ret));
-    } else {
-        zlog_warn("Successfully exec systemctl reload routing_telemetry.service");
-    }
+static void reload_routing_telemetry_service(void)
+{
+	int ret = system("systemctl reload routing_telemetry.service");
+	if (ret == -1) {
+		zlog_err("Failed to exec systemctl reload routing_telemetry.service");
+	} else if (WEXITSTATUS(ret) != 0) {
+		zlog_err("Error occurred while reloading routing_telemetry.service, exit code: %d",
+			 WEXITSTATUS(ret));
+	} else {
+		zlog_warn("Successfully exec systemctl reload routing_telemetry.service");
+	}
 }
 
 static void restart_kill(struct event *t_kill)
@@ -650,10 +652,10 @@ static void daemon_down(struct daemon *dmn, const char *why)
 	if (try_connect(dmn) < 0)
 		SET_WAKEUP_DOWN(dmn);
 
-   if (strcmp(dmn->name, "bgpd") == 0 || strcmp(dmn->name, "zebra") == 0) {
+	if (strcmp(dmn->name, "bgpd") == 0 || strcmp(dmn->name, "zebra") == 0) {
 		zlog_notice("daemons down, doing reloading routing telemetry service");
-       reload_routing_telemetry_service();
-   }
+		reload_routing_telemetry_service();
+	}
 	systemd_send_status("FRR partially operational");
 	phase_check();
 }

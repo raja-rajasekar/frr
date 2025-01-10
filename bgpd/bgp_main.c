@@ -392,12 +392,8 @@ static void bgp_vrf_terminate(void)
 }
 
 static const struct frr_yang_module_info *const bgpd_yang_modules[] = {
-	&frr_filter_info,
-	&frr_interface_info,
-	&frr_route_map_info,
-	&frr_vrf_info,
-	&frr_bgp_route_map_info,
-	&frr_bgp_peer_info,
+	&frr_filter_info, &frr_interface_info,	   &frr_route_map_info,
+	&frr_vrf_info,	  &frr_bgp_route_map_info, &frr_bgp_peer_info,
 };
 
 /* clang-format off */

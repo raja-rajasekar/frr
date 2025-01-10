@@ -3091,7 +3091,7 @@ static void process_subq_early_route_add(struct zebra_early_route *ere)
 
 	SET_FLAG(re->status, ROUTE_ENTRY_CHANGED);
 	rib_addnode(rn, re, 1);
-        struct rib_table_info *info = srcdest_rnode_table_info(rn);
+	struct rib_table_info *info = srcdest_rnode_table_info(rn);
 	info->route_count[re->type]++;
 
 	dest = rib_dest_from_rnode(rn);

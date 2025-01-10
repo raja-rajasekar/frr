@@ -1473,16 +1473,15 @@ DEFPY(show_yang_operational_data, show_yang_operational_data_cmd,
 	   |translate WORD$translator_family\
 	   |with-config$with_config\
 	 }]",
-      SHOW_STR
-      "YANG information\n"
-      "Show YANG operational data\n"
-      "XPath expression specifying the YANG data path\n"
-      "Set the output format\n"
-      "JavaScript Object Notation\n"
-      "Extensible Markup Language\n"
-      "Translate operational data\n"
-      "YANG module translator\n"
-      "Merge configuration data\n")
+      SHOW_STR "YANG information\n"
+	       "Show YANG operational data\n"
+	       "XPath expression specifying the YANG data path\n"
+	       "Set the output format\n"
+	       "JavaScript Object Notation\n"
+	       "Extensible Markup Language\n"
+	       "Translate operational data\n"
+	       "YANG module translator\n"
+	       "Merge configuration data\n")
 {
 	LYD_FORMAT format;
 	struct yang_translator *translator = NULL;
@@ -1499,7 +1498,7 @@ DEFPY(show_yang_operational_data, show_yang_operational_data_cmd,
 
 	if (!xpath) {
 		nb_show_subscription_cache(vty);
-		return;
+		return CMD_SUCCESS;
 	}
 	if (translator_family) {
 		translator = yang_translator_find(translator_family);
