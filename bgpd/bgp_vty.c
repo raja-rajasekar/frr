@@ -4086,6 +4086,32 @@ DEFPY(no_bgp_per_src_nhg_convergence_timer, no_bgp_per_src_nhg_convergence_timer
 	return CMD_SUCCESS;
 }
 
+DEFPY(bgp_per_src_nhg_adv_delay_timer, bgp_per_src_nhg_adv_delay_timer_cmd,
+      "bgp per-source-nhg adv-delay-timer (0-60)$period",
+      BGP_STR "Per Source NHG settings\n"
+	      "Time in secs to wait before starting to advertise routes to neighbors\n"
+	      "Default is 10 sec\n")
+{
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+
+	bgp->per_src_nhg_start_adv_delay_timer = period;
+
+	return CMD_SUCCESS;
+}
+
+DEFPY(no_bgp_per_src_nhg_adv_delay_timer, no_bgp_per_src_nhg_adv_delay_timer_cmd,
+      "no bgp per-source-nhg adv-delay-timer [(0-60)]",
+      NO_STR BGP_STR "Per Source NHG settings\n"
+		     "Time in secs to wait before starting to advertise routes to neighbors\n"
+		     "Default is 10 sec\n")
+{
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+
+	bgp->per_src_nhg_start_adv_delay_timer = BGP_DEFAULT_PER_SRC_NHG_START_ADV_DELAY_TIME;
+
+	return CMD_SUCCESS;
+}
+
 void bgp_initiate_graceful_shut_unshut(struct vty *vty, struct bgp *bgp)
 {
 	bgp_static_redo_import_check(bgp);
@@ -19544,6 +19570,13 @@ int bgp_config_write(struct vty *vty)
 			vty_out(vty, " bgp per-source-nhg convergence-timer %d\n",
 				bgp->per_src_nhg_convergence_timer);
 
+		/* BGP Per Source NHG adv delay timer setting */
+		if (is_nhg_per_origin_configured(bgp) &&
+		    bgp->per_src_nhg_start_adv_delay_timer !=
+			    BGP_DEFAULT_PER_SRC_NHG_START_ADV_DELAY_TIME)
+			vty_out(vty, " bgp per-source-nhg adv-delay-timer %d\n",
+				bgp->per_src_nhg_start_adv_delay_timer);
+
 		/* Suppress fib pending */
 		if (CHECK_FLAG(bgp->flags, BGP_FLAG_SUPPRESS_FIB_PENDING))
 			vty_out(vty, " bgp suppress-fib-pending\n");
@@ -21059,6 +21092,10 @@ void bgp_vty_init(void)
 	/*bgp per source nhg convergence timer commands. */
 	install_element(BGP_NODE, &bgp_per_src_nhg_convergence_timer_cmd);
 	install_element(BGP_NODE, &no_bgp_per_src_nhg_convergence_timer_cmd);
+
+	/*bgp per source nhg convergence timer commands. */
+	install_element(BGP_NODE, &bgp_per_src_nhg_adv_delay_timer_cmd);
+	install_element(BGP_NODE, &no_bgp_per_src_nhg_adv_delay_timer_cmd);
 
 	/* "neighbor role" commands. */
 	install_element(BGP_NODE, &neighbor_role_cmd);
