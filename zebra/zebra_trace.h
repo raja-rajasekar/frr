@@ -69,74 +69,16 @@
 TRACEPOINT_EVENT(
 	frr_zebra,
 	netlink_request_intf_addr,
-	TP_ARGS(struct nlsock *, netlink_cmd,
+	TP_ARGS(
 		int, family,
 		int, type,
-		uint32_t, filter_mask),
+		uint32_t,  filter_mask),
 	TP_FIELDS(
-		ctf_integer_hex(intptr_t, netlink_cmd, netlink_cmd)
 		ctf_integer(int, family, family)
 		ctf_integer(int, type, type)
 		ctf_integer(uint32_t, filter_mask, filter_mask)
 		)
 	)
-
-TRACEPOINT_EVENT(
-	frr_zebra,
-	netlink_interface,
-	TP_ARGS(
-		struct nlmsghdr *, header,
-		ns_id_t, ns_id,
-		int, startup),
-	TP_FIELDS(
-		ctf_integer_hex(intptr_t, header, header)
-		ctf_integer(uint32_t, ns_id, ns_id)
-		ctf_integer(uint32_t, startup, startup)
-		)
-	)
-
-TRACEPOINT_EVENT(
-	frr_zebra,
-	netlink_nexthop_change,
-	TP_ARGS(
-		struct nlmsghdr *, header,
-		ns_id_t, ns_id,
-		int, startup),
-	TP_FIELDS(
-		ctf_integer_hex(intptr_t, header, header)
-		ctf_integer(uint32_t, ns_id, ns_id)
-		ctf_integer(uint32_t, startup, startup)
-		)
-	)
-
-TRACEPOINT_EVENT(
-	frr_zebra,
-	netlink_route_change_read_unicast,
-	TP_ARGS(
-		struct nlmsghdr *, header,
-		ns_id_t, ns_id,
-		int, startup),
-	TP_FIELDS(
-		ctf_integer_hex(intptr_t, header, header)
-		ctf_integer(uint32_t, ns_id, ns_id)
-		ctf_integer(uint32_t, startup, startup)
-		)
-	)
-
-TRACEPOINT_EVENT(
-	frr_zebra,
-	netlink_rule_change,
-	TP_ARGS(
-		struct nlmsghdr *, header,
-		ns_id_t, ns_id,
-		int, startup),
-	TP_FIELDS(
-		ctf_integer_hex(intptr_t, header, header)
-		ctf_integer(uint32_t, ns_id, ns_id)
-		ctf_integer(uint32_t, startup, startup)
-		)
-	)
-/* clang-format off */
 
 TRACEPOINT_EVENT(
 	frr_zebra,
@@ -272,13 +214,11 @@ TRACEPOINT_EVENT(
 	frr_zebra,
 	if_dplane_result,
 	TP_ARGS(
-        struct zebra_dplane_ctx*, ctx,
         const char*, oper,
         const char*, dplane_result,
         ns_id_t, ns_id,
 		struct interface *, ifp),
 	TP_FIELDS(
-		ctf_integer_hex(intptr_t, ctx, ctx)
 		ctf_string(oper, oper)
 		ctf_string(interface_name, ifp ? ifp->name : " ")
 		ctf_integer(ifindex_t, ifindex, ifp ? ifp->ifindex : -1)
@@ -302,12 +242,10 @@ TRACEPOINT_EVENT(
 	frr_zebra,
 	if_dplane_ifp_handling,
 	TP_ARGS(
-        struct zebra_dplane_ctx*, ctx,
 		const char*, name,
         ifindex_t, ifindex,
         uint8_t, loc),
 	TP_FIELDS(
-		ctf_integer_hex(intptr_t, ctx, ctx)
 		ctf_string(interface_name, name)
 		ctf_integer(ifindex_t, ifindex, ifindex)
 		ctf_integer(uint8_t, location, loc)
@@ -324,7 +262,6 @@ TRACEPOINT_EVENT(
 	frr_zebra,
 	if_dplane_ifp_handling_new,
 	TP_ARGS(
-        struct zebra_dplane_ctx*, ctx,
 		const char*, name,
         ifindex_t, ifindex,
         vrf_id_t, vrf_id,
@@ -334,7 +271,6 @@ TRACEPOINT_EVENT(
         uint64_t, flags,
         uint8_t, loc),
 	TP_FIELDS(
-		ctf_integer_hex(intptr_t, ctx, ctx)
 		ctf_string(interface_name, name)
 		ctf_integer(ifindex_t, ifindex, ifindex)
 		ctf_integer(vrf_id_t, vrf_id, vrf_id)
@@ -1327,9 +1263,11 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_install_kernel,
     TP_ARGS(
-        int, nhe),
+        uint32_t, nhe_id, uint32_t, nhe_flags, uint8_t, loc),
     TP_FIELDS(
-        ctf_integer(int, nexthop_id, nhe)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
+        ctf_integer(uint32_t, nhe_flags, nhe_flags)
+        ctf_integer(uint8_t, location, loc)
         )
    )
 
@@ -1339,9 +1277,9 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_uninstall_kernel_rejlist_del,
     TP_ARGS(
-        int, nhe),
+        uint32_t, nhe_id),
     TP_FIELDS(
-        ctf_integer(int, nexthop_id, nhe)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
         )
    )
 
@@ -1351,9 +1289,10 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_uninstall_kernel,
     TP_ARGS(
-        int, nhe),
+        uint32_t, nhe_id, int, ret),
     TP_FIELDS(
-        ctf_integer(int, nexthop_id, nhe)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
+        ctf_integer(int, dplane_status, ret)
         )
    )
 
@@ -1363,14 +1302,12 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_dplane_result,
     TP_ARGS(
-        struct zebra_dplane_ctx *, ctx,
         const char *, op,
-        int, id,
+        uint32_t, nhe_id,
         const char *, status),
     TP_FIELDS(
-        ctf_integer_hex(intptr_t, ctx, ctx)
         ctf_string(op, op)
-        ctf_integer(int, nexthop_id, id)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
         ctf_string(status, status)
         )
    )
@@ -1381,14 +1318,30 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_interface_nhg_reinstall,
     TP_ARGS(
-        const struct interface *, ifp),
+        const struct interface *, ifp, uint32_t, nhe_id, uint32_t, nhe_flags, uint8_t, loc),
     TP_FIELDS(
         ctf_string(ifp, ifp->name)
         ctf_integer(unsigned int, ifindex, ifp->ifindex)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
+        ctf_integer(uint32_t, nhe_flags, nhe_flags)
+        ctf_integer(uint8_t, location, loc)
         )
    )
 
 TRACEPOINT_LOGLEVEL(frr_zebra, zebra_interface_nhg_reinstall, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+    frr_zebra,
+    zebra_nhg_set_valid,
+    TP_ARGS(
+        uint32_t, nhe_id, uint32_t, nhe_flags),
+    TP_FIELDS(
+        ctf_integer(uint32_t, nhe_id, nhe_id)
+        ctf_integer(uint32_t, nhe_flags, nhe_flags)
+        )
+   )
+
+TRACEPOINT_LOGLEVEL(frr_zebra, zebra_nhg_set_valid, TRACE_INFO)
 
 TRACEPOINT_EVENT(
     frr_zebra,
@@ -1406,11 +1359,11 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_dep,
     TP_ARGS(
-        int, nhe_id,
-        int, dep_id),
+        uint32_t, nhe_id,
+        uint32_t, dep_id),
     TP_FIELDS(
-        ctf_integer(int, nhe_id, nhe_id)
-        ctf_integer(int, dep_id, dep_id)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
+        ctf_integer(uint32_t, dep_id, dep_id)
         )
    )
 
@@ -1436,9 +1389,9 @@ TRACEPOINT_EVENT(
     frr_zebra,
     nhg_ctx_process_new_nhe,
     TP_ARGS(
-        int, id),
+        uint32_t, nhe_id),
     TP_FIELDS(
-        ctf_integer(int, nhe_id, id)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
         )
    )
 
@@ -1460,10 +1413,10 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_free_nhe_refcount,
     TP_ARGS(
-        int, id,
+        uint32_t, nhe_id,
         int, refcount),
     TP_FIELDS(
-        ctf_integer_hex(intptr_t, nhe_id, id)
+        ctf_integer(uint32_t, nhe_id, nhe_id)
         ctf_integer(int, ref_cnt, refcount)
         )
     )

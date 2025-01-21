@@ -1979,7 +1979,7 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 			return;
 		}
 
-		frrtrace(4, frr_zebra, if_dplane_ifp_handling, ctx, name, ifindex, 0);
+		frrtrace(3, frr_zebra, if_dplane_ifp_handling, name, ifindex, 0);
 
 		if (IS_ZEBRA_IF_BOND(ifp))
 			zebra_l2if_update_bond(ifp, false);
@@ -2045,7 +2045,8 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 		if (promiscuity && (change_flags == IFF_PROMISC)) {
 			if (IS_ZEBRA_DEBUG_KERNEL)
 				zlog_debug("%s: ignoring IFLA_PROMISCUITY change message", __func__);
-			frrtrace(4, frr_zebra, if_dplane_ifp_handling, ctx, name, ifindex, 6);
+
+			frrtrace(3, frr_zebra, if_dplane_ifp_handling, name, ifindex, 6);
 			return;
 		}
 
@@ -2067,8 +2068,8 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 					name, ifindex, vrf_id, zif_type,
 					zif_slave_type, master_ifindex);
 
-			frrtrace(9, frr_zebra, if_dplane_ifp_handling_new, ctx, name, ifindex,
-				 vrf_id, zif_type, zif_slave_type, master_ifindex, flags, 0);
+			frrtrace(8, frr_zebra, if_dplane_ifp_handling_new, name, ifindex, vrf_id,
+				 zif_type, zif_slave_type, master_ifindex, flags, 0);
 			if (ifp == NULL) {
 				/* unknown interface */
 				ifp = if_get_by_name(name, vrf_id, NULL);
@@ -2159,8 +2160,8 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 					name, ifp->ifindex, zif_slave_type,
 					master_ifindex);
 
-			frrtrace(9, frr_zebra, if_dplane_ifp_handling_new, ctx, name, ifindex,
-				 vrf_id, zif_type, zif_slave_type, master_ifindex, flags, 1);
+			frrtrace(8, frr_zebra, if_dplane_ifp_handling_new, name, ifindex, vrf_id,
+				 zif_type, zif_slave_type, master_ifindex, flags, 1);
 			set_ifindex(ifp, ifindex, zns);
 			ifp->mtu6 = ifp->mtu = mtu;
 			ifp->metric = 0;
@@ -2197,7 +2198,7 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 						zlog_debug(
 							"Intf %s(%u) has gone DOWN",
 							name, ifp->ifindex);
-					frrtrace(4, frr_zebra, if_dplane_ifp_handling, ctx, name,
+					frrtrace(3, frr_zebra, if_dplane_ifp_handling, name,
 						 ifp->ifindex, 1);
 					if_down(ifp);
 					rib_update(RIB_UPDATE_KERNEL);
@@ -2212,7 +2213,7 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 						zlog_debug(
 							"Intf %s(%u) PTM up, notifying clients",
 							name, ifp->ifindex);
-					frrtrace(4, frr_zebra, if_dplane_ifp_handling, ctx, name,
+					frrtrace(3, frr_zebra, if_dplane_ifp_handling, name,
 						 ifp->ifindex, 2);
 					if_up(ifp, !is_up);
 
@@ -2238,8 +2239,8 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 						zlog_debug(
 							"Intf %s(%u) bridge changed MAC address",
 							name, ifp->ifindex);
-						frrtrace(4, frr_zebra, if_dplane_ifp_handling, ctx,
-							 name, ifp->ifindex, 3);
+						frrtrace(3, frr_zebra, if_dplane_ifp_handling, name,
+							 ifp->ifindex, 3);
 						chgflags =
 							ZEBRA_BRIDGE_MASTER_MAC_CHANGE;
 					}
@@ -2253,7 +2254,7 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 						zlog_debug(
 							"Intf %s(%u) has come UP",
 							name, ifp->ifindex);
-					frrtrace(4, frr_zebra, if_dplane_ifp_handling, ctx, name,
+					frrtrace(3, frr_zebra, if_dplane_ifp_handling, name,
 						 ifp->ifindex, 4);
 					if_up(ifp, true);
 					if (IS_ZEBRA_IF_BRIDGE(ifp))
@@ -2264,7 +2265,7 @@ static void zebra_if_dplane_ifp_handling(struct zebra_dplane_ctx *ctx)
 						zlog_debug(
 							"Intf %s(%u) has gone DOWN",
 							name, ifp->ifindex);
-					frrtrace(4, frr_zebra, if_dplane_ifp_handling, ctx, name,
+					frrtrace(3, frr_zebra, if_dplane_ifp_handling, name,
 						 ifp->ifindex, 5);
 					if_down(ifp);
 					rib_update(RIB_UPDATE_KERNEL);
@@ -2335,8 +2336,8 @@ void zebra_if_dplane_result(struct zebra_dplane_ctx *ctx)
 	}
 
 	ifp = if_lookup_by_index_per_ns(zns, ifindex);
-	frrtrace(5, frr_zebra, if_dplane_result, ctx, dplane_op2str(op), dplane_res2str(dp_res),
-		 ns_id, ifp);
+	frrtrace(4, frr_zebra, if_dplane_result, dplane_op2str(op), dplane_res2str(dp_res), ns_id,
+		 ifp);
 
 	if (op == DPLANE_OP_INTF_ADDR_ADD || op == DPLANE_OP_INTF_ADDR_DEL) {
 		zebra_if_addr_update_ctx(ctx, ifp);

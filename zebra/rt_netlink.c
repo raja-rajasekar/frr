@@ -769,9 +769,6 @@ int netlink_route_change_read_unicast_internal(struct nlmsghdr *h,
 	void *src = NULL;     /* IPv6 srcdest   source prefix */
 	enum blackhole_type bh_type = BLACKHOLE_UNSPEC;
 
-	frrtrace(3, frr_zebra, netlink_route_change_read_unicast, h, ns_id,
-		 startup);
-
 	rtm = NLMSG_DATA(h);
 
 	if (startup && h->nlmsg_type != RTM_NEWROUTE)
@@ -3375,8 +3372,6 @@ int netlink_nexthop_change(struct nlmsghdr *h, ns_id_t ns_id, int startup)
 	uint16_t grp_count = 0;
 	struct rtattr *tb[NHA_MAX + 1] = {};
 
-	frrtrace(3, frr_zebra, netlink_nexthop_change, h, ns_id, startup);
-
 	nhm = NLMSG_DATA(h);
 
 	if (ns_id)
@@ -3656,6 +3651,7 @@ static ssize_t netlink_neigh_update_msg_encode(
 			return 0;
 	}
 	if (lla && ip) {
+	    zlog_info("%s family %s  %u", __func__, nl_family_to_str(family), family);
 		frrtrace(8, frr_zebra, netlink_neigh_update_msg_encode, lla, ip, nhg_id, flags,
 			 state, family, type, op);
 	} else if (lla) {
