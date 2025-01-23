@@ -659,7 +659,6 @@ void rib_install_kernel(struct route_node *rn, struct route_entry *re, struct ro
 	 * Install the resolved nexthop object first.
 	 */
 	zebra_nhg_install_kernel(re->nhe, re->type);
-
 	/*
 	 * If this is a replace to a new RE let the originator of the RE
 	 * know that they've lost
@@ -775,6 +774,7 @@ void rib_uninstall_kernel(struct route_node *rn, struct route_entry *re)
 	struct nexthop *nexthop;
 	struct rib_table_info *info = srcdest_rnode_table_info(rn);
 	struct zebra_vrf *zvrf = zebra_vrf_lookup_by_id(re->vrf_id);
+	char buf[PREFIX2STR_BUFFER];
 
 	if (info->safi != SAFI_UNICAST) {
 		UNSET_FLAG(re->status, ROUTE_ENTRY_INSTALLED);
@@ -789,7 +789,10 @@ void rib_uninstall_kernel(struct route_node *rn, struct route_entry *re)
 	 */
 	hook_call(rib_update, rn, "uninstalling from kernel");
 
-	switch (dplane_route_delete(rn, re)) {
+	enum zebra_dplane_result result = dplane_route_delete(rn, re);
+	frrtrace(2, frr_zebra, rib_uninstall_kernel_route, srcdest_rnode2str(rn, buf, sizeof(buf)),
+		 result);
+	switch (result) {
 	case ZEBRA_DPLANE_REQUEST_QUEUED:
 		if (zvrf)
 			zvrf->removals_queued++;
