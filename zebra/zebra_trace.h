@@ -1254,11 +1254,10 @@ TRACEPOINT_LOGLEVEL(frr_zebra, zebra_vxlan_remote_vtep_del, TRACE_INFO)
 TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_install_kernel,
-    TP_ARGS(
-        uint32_t, nhe_id, uint32_t, nhe_flags, uint8_t, loc),
+    TP_ARGS(struct nhg_hash_entry *, nhe, uint8_t, loc),
     TP_FIELDS(
-        ctf_integer(uint32_t, nhe_id, nhe_id)
-        ctf_integer(uint32_t, nhe_flags, nhe_flags)
+        ctf_integer(uint32_t, nhe_id, nhe->id)
+        ctf_integer(uint32_t, nhe_flags, nhe->flags)
         ctf_integer(uint8_t, location, loc)
         )
    )
@@ -1280,10 +1279,10 @@ TRACEPOINT_LOGLEVEL(frr_zebra, zebra_nhg_uninstall_kernel_rejlist_del, TRACE_INF
 TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_uninstall_kernel,
-    TP_ARGS(
-        uint32_t, nhe_id, int, ret),
+    TP_ARGS(struct nhg_hash_entry *, nhe, int, ret),
     TP_FIELDS(
-        ctf_integer(uint32_t, nhe_id, nhe_id)
+        ctf_integer(uint32_t, nhe_id, nhe->id)
+        ctf_integer(uint32_t, nhe_flags, nhe->flags)
         ctf_integer(int, dplane_status, ret)
         )
    )
@@ -1310,12 +1309,12 @@ TRACEPOINT_EVENT(
     frr_zebra,
     zebra_interface_nhg_reinstall,
     TP_ARGS(
-        const struct interface *, ifp, uint32_t, nhe_id, uint32_t, nhe_flags, uint8_t, loc),
+        const struct interface *, ifp, struct nhg_hash_entry *, nhe, uint8_t, loc),
     TP_FIELDS(
         ctf_string(ifp, ifp->name)
         ctf_integer(unsigned int, ifindex, ifp->ifindex)
-        ctf_integer(uint32_t, nhe_id, nhe_id)
-        ctf_integer(uint32_t, nhe_flags, nhe_flags)
+        ctf_integer(uint32_t, nhe_id, nhe->id)
+        ctf_integer(uint32_t, nhe_flags, nhe->flags)
         ctf_integer(uint8_t, location, loc)
         )
    )
@@ -1325,11 +1324,10 @@ TRACEPOINT_LOGLEVEL(frr_zebra, zebra_interface_nhg_reinstall, TRACE_INFO)
 TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_set_valid,
-    TP_ARGS(
-        uint32_t, nhe_id, uint32_t, nhe_flags),
+    TP_ARGS(struct nhg_hash_entry *, nhe),
     TP_FIELDS(
-        ctf_integer(uint32_t, nhe_id, nhe_id)
-        ctf_integer(uint32_t, nhe_flags, nhe_flags)
+        ctf_integer(uint32_t, nhe_id, nhe->id)
+        ctf_integer(uint32_t, nhe_flags, nhe->flags)
         )
    )
 
@@ -1402,12 +1400,11 @@ TRACEPOINT_LOGLEVEL(frr_zebra, zebra_nhg_nhe2grp_internal_failure, TRACE_INFO)
 TRACEPOINT_EVENT(
     frr_zebra,
     zebra_nhg_free_nhe_refcount,
-    TP_ARGS(
-        uint32_t, nhe_id,
-        int, refcount),
+    TP_ARGS(struct nhg_hash_entry *, nhe),
     TP_FIELDS(
-        ctf_integer(uint32_t, nhe_id, nhe_id)
-        ctf_integer(int, ref_cnt, refcount)
+        ctf_integer(uint32_t, nhe_id, nhe->id)
+        ctf_integer(uint32_t, nhe_flags, nhe->flags)
+        ctf_integer(int, ref_cnt, nhe->refcnt)
         )
     )
 
