@@ -4366,6 +4366,9 @@ static void process_eoiu_marker(struct bgp_dest *dest)
 			   subqueue2str(META_QUEUE_EOIU_MARKER));
 
 	bgp_process_main_one(info->bgp, NULL, 0, 0);
+
+	XFREE(MTYPE_BGP_EOIU_MARKER_INFO, info);
+	XFREE(MTYPE_BGP_NODE, dest);
 }
 
 /*
@@ -4556,6 +4559,7 @@ static void eoiu_marker_queue_free(struct meta_queue *mq, struct bgp_dest_queue 
 		XFREE(MTYPE_BGP_EOIU_MARKER_INFO, dest->info);
 		STAILQ_REMOVE_HEAD(l, pq);
 		STAILQ_NEXT(dest, pq) = NULL; /* complete unlink */
+		XFREE(MTYPE_BGP_NODE, dest);
 		mq->size--;
 	}
 }
