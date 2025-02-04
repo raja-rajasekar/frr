@@ -239,6 +239,106 @@ struct yang_data *lib_vrf_peer_l2vpn_evpn_rcvd_get_elem(struct nb_cb_get_elem_ar
 	return NULL;
 }
 
+/*
+ * XPath: /frr-bgp-peer:lib/vrf/peer/ipv4-unicast-rcvd-pfx-installed
+ */
+struct yang_data *
+lib_vrf_peer_ipv4_unicast_rcvd_pfx_installed_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->pinstalledcnt[AFI_IP][SAFI_UNICAST]);
+}
+
+/*
+ * XPath: /frr-bgp-peer:lib/vrf/peer/ipv6-unicast-rcvd-pfx-installed
+ */
+struct yang_data *
+lib_vrf_peer_ipv6_unicast_rcvd_pfx_installed_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->pinstalledcnt[AFI_IP6][SAFI_UNICAST]);
+}
+
+/*
+ * XPath: /frr-bgp-peer:lib/vrf/peer/l2vpn-evpn-rcvd-pfx-installed
+ */
+struct yang_data *
+lib_vrf_peer_l2vpn_evpn_rcvd_pfx_installed_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->pinstalledcnt[AFI_L2VPN][SAFI_EVPN]);
+}
+
+/*
+ * XPath: /frr-bgp-peer:lib/vrf/peer/ipv4-unicast-pfx-sent
+ */
+struct yang_data *lib_vrf_peer_ipv4_unicast_pfx_sent_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->padjoutcnt[AFI_IP][SAFI_UNICAST]);
+}
+
+/*
+ * XPath: /frr-bgp-peer:lib/vrf/peer/ipv6-unicast-pfx-sent
+ */
+struct yang_data *lib_vrf_peer_ipv6_unicast_pfx_sent_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->padjoutcnt[AFI_IP6][SAFI_UNICAST]);
+}
+
+/*
+ * XPath: /frr-bgp-peer:lib/vrf/peer/l2vpn_evpn_pfx_sent
+ */
+struct yang_data *lib_vrf_peer_l2vpn_evpn_pfx_sent_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->padjoutcnt[AFI_L2VPN][SAFI_EVPN]);
+}
+
+/*
+ * XPath: /frr-bgp-peer:lib/vrf/peer/total-msgs-sent
+ */
+struct yang_data *lib_vrf_peer_total_msgs_sent_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, PEER_TOTAL_TX(peer));
+}
+
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/total-msgs_rcvd
+ *   */
+struct yang_data *lib_vrf_peer_total_msgs_recvd_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, PEER_TOTAL_RX(peer));
+}
+
+
 /* clang-format off */
 const struct frr_yang_module_info frr_bgp_peer_info = {
 	.name = "frr-bgp-peer",
@@ -308,21 +408,69 @@ const struct frr_yang_module_info frr_bgp_peer_info = {
 			}
 		},
 		{
-			.xpath = "/frr-bgp-peer:lib/vrf/peer/ipv4-unicast-rcvd",
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/ipv4-unicast-rcvd-pfx",
 			.cbs = {
 				.get_elem = lib_vrf_peer_ipv4_unicast_rcvd_get_elem,
 			}
 		},
 		{
-			.xpath = "/frr-bgp-peer:lib/vrf/peer/ipv6-unicast-rcvd",
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/ipv6-unicast-rcvd-pfx",
 			.cbs = {
 				.get_elem = lib_vrf_peer_ipv6_unicast_rcvd_get_elem,
 			}
 		},
                 {
-                        .xpath = "/frr-bgp-peer:lib/vrf/peer/l2vpn-evpn-rcvd",
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/l2vpn-evpn-rcvd-pfx",
                         .cbs = {
                                 .get_elem = lib_vrf_peer_l2vpn_evpn_rcvd_get_elem,
+                        }
+                },
+                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/ipv4-unicast-rcvd-pfx-installed",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_ipv4_unicast_rcvd_pfx_installed_get_elem,
+                        }
+                },
+                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/ipv6-unicast-rcvd-pfx-installed",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_ipv6_unicast_rcvd_pfx_installed_get_elem,
+                        }
+                },
+                                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/l2vpn-evpn-rcvd-pfx-installed",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_l2vpn_evpn_rcvd_pfx_installed_get_elem,
+                        }
+                },
+                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/ipv4-unicast-pfx-sent",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_ipv4_unicast_pfx_sent_get_elem,
+                        }
+                },
+                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/ipv6-unicast-pfx-sent",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_ipv6_unicast_pfx_sent_get_elem,
+                        }
+                },
+                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/l2vpn-evpn-pfx-sent",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_l2vpn_evpn_pfx_sent_get_elem,
+                        }
+                },
+                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/total-msgs-sent",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_total_msgs_sent_get_elem,
+                        }
+                },
+                {
+                        .xpath = "/frr-bgp-peer:lib/vrf/peer/total-msgs-recvd",
+                        .cbs = {
+                                .get_elem = lib_vrf_peer_total_msgs_recvd_get_elem,
                         }
                 },
 		{

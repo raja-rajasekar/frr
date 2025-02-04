@@ -81,6 +81,10 @@ static void adj_free(struct bgp_adj_out *adj)
 	TAILQ_REMOVE(&(adj->subgroup->adjq), adj, subgrp_adj_train);
 	SUBGRP_DECR_STAT(adj->subgroup, adj_count);
 
+	struct peer *peer = SUBGRP_PEER(adj->subgroup);
+	struct bgp_table *table = bgp_dest_table(adj->dest);
+	peer->padjoutcnt[table->afi][table->safi]--;
+
 	RB_REMOVE(bgp_adj_out_rb, &adj->dest->adj_out, adj);
 	bgp_dest_unlock_node(adj->dest);
 
@@ -448,6 +452,8 @@ struct bgp_adj_out *bgp_adj_out_alloc(struct update_subgroup *subgrp,
 				      uint32_t addpath_tx_id)
 {
 	struct bgp_adj_out *adj;
+	struct peer *peer = SUBGRP_PEER(subgrp);
+	struct bgp_table *table = bgp_dest_table(dest);
 
 	adj = XCALLOC(MTYPE_BGP_ADJ_OUT, sizeof(struct bgp_adj_out));
 	adj->subgroup = subgrp;
@@ -459,6 +465,8 @@ struct bgp_adj_out *bgp_adj_out_alloc(struct update_subgroup *subgrp,
 
 	TAILQ_INSERT_TAIL(&(subgrp->adjq), adj, subgrp_adj_train);
 	SUBGRP_INCR_STAT(subgrp, adj_count);
+	/* Increment the subgrp->peers->padjoutcnt */
+	peer->padjoutcnt[table->afi][table->safi]++;
 	return adj;
 }
 

@@ -1263,6 +1263,12 @@ const struct frr_yang_module_info frr_zebra_info = {
                                 .get_elem = lib_vrf_ipv6_route_count_total_get_elem,
                         }
                 },
+                {
+                        .xpath = "/frr-zebra:lib/vrf/nhg-count",
+                        .cbs = {
+                                .get_elem = lib_vrf_nhg_count_get_elem,
+			}
+                },
 		{
 			.xpath = NULL,
 		},

@@ -3065,6 +3065,12 @@ module frr-zebra {
          config false;
          uses route-count-operational;
        }
+       leaf nhg-count {
+         config false;
+         type uint32;
+         description
+            "NHG count";
+       }
     }
   }
 }

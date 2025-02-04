@@ -648,9 +648,12 @@ static void bgp_pcount_adjust(struct bgp_dest *dest, struct bgp_path_info *pi)
 		UNSET_FLAG(pi->flags, BGP_PATH_COUNTED);
 
 		/* slight hack, but more robust against errors. */
-		if (pi->peer->pcount[table->afi][table->safi])
+		if (pi->peer->pcount[table->afi][table->safi]) {
 			pi->peer->pcount[table->afi][table->safi]--;
-		else
+			if (CHECK_FLAG(pi->flags, BGP_PATH_VALID) &&
+			    (pi->peer->pcount[table->afi][table->safi] > 0))
+				pi->peer->pinstalledcnt[table->afi][table->safi]--;
+		} else
 			flog_err(EC_LIB_DEVELOPMENT,
 				 "Asked to decrement 0 prefix count for peer");
 	} else if (BGP_PATH_COUNTABLE(pi)
@@ -658,6 +661,8 @@ static void bgp_pcount_adjust(struct bgp_dest *dest, struct bgp_path_info *pi)
 		SET_FLAG(pi->flags, BGP_PATH_COUNTED);
 		pi->peer->pcount[table->afi][table->safi]++;
 	}
+	if (CHECK_FLAG(pi->flags, BGP_PATH_VALID))
+		pi->peer->pinstalledcnt[table->afi][table->safi]++;
 }
 
 static int bgp_label_index_differs(struct bgp_path_info *pi1,

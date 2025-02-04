@@ -22,6 +22,17 @@ struct yang_data *lib_vrf_peer_rx_updates_get_elem(struct nb_cb_get_elem_args *a
 struct yang_data *lib_vrf_peer_ipv4_unicast_rcvd_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *lib_vrf_peer_ipv6_unicast_rcvd_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *lib_vrf_peer_l2vpn_evpn_rcvd_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *
+lib_vrf_peer_ipv4_unicast_rcvd_pfx_installed_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *
+lib_vrf_peer_ipv6_unicast_rcvd_pfx_installed_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *
+lib_vrf_peer_l2vpn_evpn_rcvd_pfx_installed_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *lib_vrf_peer_ipv4_unicast_pfx_sent_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *lib_vrf_peer_ipv6_unicast_pfx_sent_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *lib_vrf_peer_l2vpn_evpn_pfx_sent_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *lib_vrf_peer_total_msgs_sent_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *lib_vrf_peer_total_msgs_recvd_get_elem(struct nb_cb_get_elem_args *args);
 extern const struct frr_yang_module_info frr_bgp_peer_info;
 
 struct yang_data *lib_peer_status_get_elem(struct nb_cb_get_elem_args *args);

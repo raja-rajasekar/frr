@@ -504,6 +504,7 @@ struct yang_data *lib_vrf_ipv6_route_count_pbr_get_elem(struct nb_cb_get_elem_ar
 struct yang_data *lib_vrf_ipv6_route_count_table_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *lib_vrf_ipv6_route_count_ospf_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *lib_vrf_ipv6_route_count_total_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *lib_vrf_nhg_count_get_elem(struct nb_cb_get_elem_args *args);
 
 #ifdef __cplusplus
 }

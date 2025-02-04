@@ -1339,3 +1339,11 @@ struct yang_data *lib_vrf_ipv6_route_count_total_get_elem(struct nb_cb_get_elem_
 	DEBUGD(&nb_dbg_events, "Total Routes %d", count);
 	return yang_data_new_uint32(args->xpath, count);
 }
+
+/*
+ * XPath: /frr-zebra:lib/vrf/nhg-count
+ */
+struct yang_data *lib_vrf_nhg_count_get_elem(struct nb_cb_get_elem_args *args)
+{
+	return yang_data_new_uint32(args->xpath, hashcount(zrouter.nhgs_id));
+}
