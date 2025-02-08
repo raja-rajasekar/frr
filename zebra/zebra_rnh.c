@@ -1270,6 +1270,7 @@ void show_nexthop_json_helper(json_object *json_nexthop, const struct nexthop *n
 	json_object *json_backups = NULL;
 	json_object *json_seg6local = NULL;
 	json_object *json_seg6local_context = NULL;
+	json_object *json_srv6_sid_structure = NULL;
 	json_object *json_seg6 = NULL;
 	json_object *json_segs = NULL;
 	int i;
@@ -1441,6 +1442,11 @@ void show_nexthop_json_helper(json_object *json_nexthop, const struct nexthop *n
 		seg6local_context2json(&nexthop->nh_srv6->seg6local_ctx,
 				       nexthop->nh_srv6->seg6local_action, json_seg6local_context);
 		json_object_object_add(json_nexthop, "seg6localContext", json_seg6local_context);
+
+		json_srv6_sid_structure = json_object_new_object();
+		srv6_sid_structure2json(&nexthop->nh_srv6->seg6local_ctx, json_srv6_sid_structure);
+		json_object_object_add(json_seg6local, "sidStructure", json_srv6_sid_structure);
+
 		if (nexthop->nh_srv6->seg6_segs &&
 		    nexthop->nh_srv6->seg6_segs->num_segs == 1) {
 			json_seg6 = json_object_new_object();
