@@ -1836,8 +1836,6 @@ struct peer {
 	/* Installed prefix count */
 	uint32_t pinstalledcnt[AFI_MAX][SAFI_MAX];
 
-	/* Prefixes sent count in Adj Out */
-	uint32_t padjoutcnt[AFI_MAX][SAFI_MAX];
 	/* Max prefix count. */
 	uint32_t pmax[AFI_MAX][SAFI_MAX];
 	uint8_t pmax_threshold[AFI_MAX][SAFI_MAX];

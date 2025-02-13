@@ -81,72 +81,60 @@ module frr-bgp-peer {
             description
                "Messages Recieved";
           }
-          leaf ipv4-unicast-rcvd-pfx {
+          list afi-safi {
             config false;
-            type uint32;
+            key "afi-safi-name";
             description
-               "IPv4 unicast prefix count after post policy";
+              "AFI-SAFI.";
+            leaf afi-safi-name {
+              config false;
+              type string;
+              description
+                "AFI SAFI name";
+            }
+            leaf rcvd-pfx {
+              config false;
+              type uint32;
+              description
+                 "Recvd prefixes post policy";
+            }
+            leaf rcvd-pfx-installed {
+              config false;
+              type uint32;
+              description
+                "Recvd prefixes installed post policy";
+            }
+            leaf pfx-sent {
+              config false;
+              type uint32;
+              description
+                 "Prefixes sent from the peer";
+            }
+            leaf afi {
+              config false;
+              type string;
+              description
+                  "Address family";
+            }
+            leaf safi {
+               config false;
+               type string;
+               description
+                  "Subsequent Address family";
+            }
           }
-          leaf ipv6-unicast-rcvd-pfx {
-            config false;
-            type uint32;
-            description
-               "IPv6 unicast prefix count after post policy";
-          }
-          leaf l2vpn-evpn-rcvd-pfx {
-            config false;
-            type uint32;
-            description
-               "L2VPN EVPN prefix count after post policy";
-          }
-          leaf ipv4-unicast-rcvd-pfx-installed {
-            config false;
-            type uint32;
-            description
-               "IPv4 unicast prefix count received and installed";
-          }
-          leaf ipv6-unicast-rcvd-pfx-installed {
-            config false;
-            type uint32;
-            description
-               "IPv6 unicast prefix count recieved and installed";
-         }
-         leaf l2vpn-evpn-rcvd-pfx-installed {
-             config false;
-             type uint32;
-             description
-               "L2VPN EVPN prefix count recieved and installed";
-         }
-         leaf ipv4-unicast-pfx-sent {
-            config false;
-            type uint32;
-            description
-               "IPv4 unicast prefix sent";
-         }
-         leaf ipv6-unicast-pfx-sent {
-            config false;
-            type uint32;
-            description
-               "IPv6 unicast prefix sent";
-         }
-         leaf l2vpn-evpn-pfx-sent {
-            config false;
-            type uint32;
-            description
-               "L2VPN EVPN prefix sent";
-         }
-         leaf total-msgs-sent {
+          leaf total-msgs-sent {
             config false;
             type uint32;
             description
                "Total messages sent";
-         }
-         leaf total-msgs-recvd {
+          }
+          leaf total-msgs-recvd {
             config false;
             type uint32;
             description
                "Total messages recieved";
-         }
+          }
       }
     }
   }

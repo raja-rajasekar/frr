@@ -650,9 +650,6 @@ static void bgp_pcount_adjust(struct bgp_dest *dest, struct bgp_path_info *pi)
 		/* slight hack, but more robust against errors. */
 		if (pi->peer->pcount[table->afi][table->safi]) {
 			pi->peer->pcount[table->afi][table->safi]--;
-			if (CHECK_FLAG(pi->flags, BGP_PATH_VALID) &&
-			    (pi->peer->pcount[table->afi][table->safi] > 0))
-				pi->peer->pinstalledcnt[table->afi][table->safi]--;
 		} else
 			flog_err(EC_LIB_DEVELOPMENT,
 				 "Asked to decrement 0 prefix count for peer");
@@ -661,8 +658,33 @@ static void bgp_pcount_adjust(struct bgp_dest *dest, struct bgp_path_info *pi)
 		SET_FLAG(pi->flags, BGP_PATH_COUNTED);
 		pi->peer->pcount[table->afi][table->safi]++;
 	}
-	if (CHECK_FLAG(pi->flags, BGP_PATH_VALID))
+}
+
+/*
+ * Installed count tracks:
+ * Routes defined to be those that:
+	   - are selected, after the application of policies, to be
+	     included in the Adj-RIB-In-Post, AND
+	   - are selected by best path selection and hence installed
+	     in the Loc-RIB (either as the only route, or as part of
+	     a multipath set, AND
+	   - are selected, after the application of protocol
+	     preferences (e.g., administrative distance) as the
+	     route to be used by the system's RIB"
+*/
+static void bgp_pcount_installed(struct bgp_dest *dest, struct bgp_path_info *pi, uint32_t flag,
+				 bool set)
+{
+	struct bgp_table *table;
+	table = bgp_dest_table(dest);
+	if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED) && set)
 		pi->peer->pinstalledcnt[table->afi][table->safi]++;
+
+	if (CHECK_FLAG(flag, BGP_PATH_SELECTED) && !set) {
+		if (pi->peer->pinstalledcnt[table->afi][table->safi])
+			pi->peer->pinstalledcnt[table->afi][table->safi]--;
+	}
+	return;
 }
 
 static int bgp_label_index_differs(struct bgp_path_info *pi1,
@@ -679,6 +701,9 @@ void bgp_path_info_set_flag(struct bgp_dest *dest, struct bgp_path_info *pi,
 {
 	SET_FLAG(pi->flags, flag);
 
+	/* Installed count increment */
+	bgp_pcount_installed(dest, pi, flag, true);
+
 	/* early bath if we know it's not a flag that changes countability state
 	 */
 	if (!CHECK_FLAG(flag,
@@ -692,6 +717,9 @@ void bgp_path_info_unset_flag(struct bgp_dest *dest, struct bgp_path_info *pi,
 			      uint32_t flag)
 {
 	UNSET_FLAG(pi->flags, flag);
+
+	/* Install count decrement */
+	bgp_pcount_installed(dest, pi, flag, false);
 
 	/* early bath if we know it's not a flag that changes countability state
 	 */
