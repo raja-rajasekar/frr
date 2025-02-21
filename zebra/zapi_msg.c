@@ -829,7 +829,8 @@ static void zread_route_notify_request(ZAPI_HANDLER_ARGS)
 	 * Since bgp is the only one who does this, turn on/off notification
 	 * on acks as a cumulus only patch
 	 */
-	zrouter.notify_on_ack = !!!notify;
+	if (client->proto == ZEBRA_ROUTE_BGP)
+		zrouter.notify_on_ack = !!!notify;
 stream_failure:
 	return;
 }
