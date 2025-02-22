@@ -518,6 +518,8 @@ int main(int argc, char **argv)
 	 *  duration.
 	 */
 	zrouter.startup_time = monotime_nano();
+	zrouter.rib_sweep_time = 0;
+	zrouter.graceful_restart = zebra_di.graceful_restart;
 
 #if defined(HAVE_CSMGR)
 	if (zrouter.frr_csm_smode == FAST_START ||
@@ -525,8 +527,6 @@ int main(int argc, char **argv)
 		zrouter.graceful_restart = true;
 	zrouter.maint_mode = (zrouter.frr_csm_smode == MAINT);
 #endif
-	zrouter.rib_sweep_time = 0;
-	zrouter.graceful_restart = zebra_di.graceful_restart;
 	if (!zrouter.graceful_restart)
 		event_add_timer(zrouter.master, rib_sweep_route, NULL, 0, NULL);
 	else {
