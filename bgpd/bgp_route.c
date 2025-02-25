@@ -12369,7 +12369,7 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 			}
 
 			if (json_detail_header || brief) {
-				vty_out(vty, ",\"pathCount\":%d\n", prefix_path_count);
+				vty_out(vty, "\"pathCount\":%d\n", prefix_path_count);
 				/*
 				 * add +1 to the multipath count because
 				 * it does not include the best path itself
