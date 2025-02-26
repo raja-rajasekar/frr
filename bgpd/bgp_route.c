@@ -12399,6 +12399,7 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 			picomm = bgp_attr_get_community(pi->attr);
 
 			total_count++;
+			prefix_path_count++;
 
 			if (!brief) {
 				if (type == bgp_show_type_prefix_version) {
@@ -12501,15 +12502,18 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 					if (ret == RMAP_DENYMATCH)
 						continue;
 				}
-				if (type == bgp_show_type_neighbor ||
-				    type == bgp_show_type_flap_neighbor ||
-				    type == bgp_show_type_damp_neighbor) {
-					union sockunion *su = output_arg;
+			}
 
-					if (pi->peer == NULL || pi->peer->su_remote == NULL ||
-					    !sockunion_same(pi->peer->su_remote, su))
-						continue;
-				}
+			if (type == bgp_show_type_neighbor || type == bgp_show_type_flap_neighbor ||
+			    type == bgp_show_type_damp_neighbor) {
+				union sockunion *su = output_arg;
+
+				if (pi->peer == NULL || pi->peer->su_remote == NULL ||
+				    !sockunion_same(pi->peer->su_remote, su))
+					continue;
+			}
+
+			if (!brief) {
 				if (type == bgp_show_type_cidr_only) {
 					uint32_t destination;
 
@@ -12670,7 +12674,6 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 				}
 			}
 			display++;
-			prefix_path_count++;
 			if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
 				multi_path_count++;
 			if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
@@ -12772,7 +12775,12 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 				 * add +1 to the multipath count because
 				 * it does not include the best path itself
 				 */
-				vty_out(vty, ",\"multiPathCount\":%d\n", multi_path_count + 1);
+				if (best_path_selected)
+					vty_out(vty, ",\"multiPathCount\":%d\n",
+						multi_path_count + 1);
+				else
+					vty_out(vty, ",\"multiPathCount\":%d\n", multi_path_count);
+
 				vty_out(vty, ",\"flags\": { \n");
 				/* Display fib flags */
 				bgp_fib_flags_info(vty, bgp, dest, NULL, best_path_selected);
@@ -16188,9 +16196,8 @@ DEFUN (show_ip_bgp_neighbor_received_prefix_filter,
 	return CMD_SUCCESS;
 }
 
-static int bgp_show_neighbor_route(struct vty *vty, struct peer *peer,
-				   afi_t afi, safi_t safi,
-				   enum bgp_show_type type, bool use_json)
+static int bgp_show_neighbor_route(struct vty *vty, struct peer *peer, afi_t afi, safi_t safi,
+				   enum bgp_show_type type, bool use_json, bool brief)
 {
 	uint16_t show_flags = 0;
 
@@ -16217,7 +16224,7 @@ static int bgp_show_neighbor_route(struct vty *vty, struct peer *peer,
 		safi = SAFI_UNICAST;
 
 	return bgp_show(vty, peer->bgp, afi, safi, type, &peer->connection->su, show_flags,
-			RPKI_NOT_BEING_USED, false);
+			RPKI_NOT_BEING_USED, brief);
 }
 
 /*
@@ -16260,9 +16267,9 @@ DEFPY(show_ip_bgp_vrf_afi_safi_routes_detailed,
 			RPKI_NOT_BEING_USED, false);
 }
 
-DEFUN (show_ip_bgp_neighbor_routes,
+DEFPY (show_ip_bgp_neighbor_routes,
        show_ip_bgp_neighbor_routes_cmd,
-       "show [ip] bgp [<view|vrf> VIEWVRFNAME] ["BGP_AFI_CMD_STR" ["BGP_SAFI_WITH_LABEL_CMD_STR"]] neighbors <A.B.C.D|X:X::X:X|WORD> <flap-statistics|dampened-routes|routes> [json]",
+       "show [ip] bgp [<view|vrf> VIEWVRFNAME] [" BGP_AFI_CMD_STR " [" BGP_SAFI_WITH_LABEL_CMD_STR"]] neighbors <A.B.C.D|X:X::X:X|WORD> <flap-statistics|dampened-routes|routes> [brief$brief] [json]",
        SHOW_STR
        IP_STR
        BGP_STR
@@ -16276,6 +16283,7 @@ DEFUN (show_ip_bgp_neighbor_routes,
        "Display flap statistics of the routes learned from neighbor\n"
        "Display the dampened routes received from neighbor\n"
        "Display routes learned from neighbor\n"
+       "Brief\n"
        JSON_STR)
 {
 	char *peerstr = NULL;
@@ -16310,7 +16318,7 @@ DEFUN (show_ip_bgp_neighbor_routes,
 	else if (argv_find(argv, argc, "routes", &idx))
 		sh_type = bgp_show_type_neighbor;
 
-	return bgp_show_neighbor_route(vty, peer, afi, safi, sh_type, uj);
+	return bgp_show_neighbor_route(vty, peer, afi, safi, sh_type, uj, brief);
 }
 
 struct bgp_table *bgp_distance_table[AFI_MAX][SAFI_MAX];
