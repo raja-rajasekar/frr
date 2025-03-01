@@ -293,6 +293,7 @@ ctx_keywords = {
         },
         "srv6": {
             "locators": {"locator ": {}},
+            "static-sids": {},
             "encapsulation": {},
             "formats": {"format": {}},
         },
