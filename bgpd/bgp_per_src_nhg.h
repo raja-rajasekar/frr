@@ -35,6 +35,9 @@ struct bgp_nhg_nexthop_cache {
 	struct bgp_nhg_nexthop_cache_head *tree;
 };
 
+extern int bgp_nhg_nexthop_cache_compare(const struct bgp_nhg_nexthop_cache *a,
+					 const struct bgp_nhg_nexthop_cache *b);
+
 DECLARE_RBTREE_UNIQ(bgp_nhg_nexthop_cache, struct bgp_nhg_nexthop_cache, entry,
 		    bgp_nhg_nexthop_cache_compare);
 
