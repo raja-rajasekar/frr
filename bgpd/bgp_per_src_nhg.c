@@ -62,6 +62,87 @@ DEFINE_MTYPE_STATIC(BGPD, BGP_PER_SRC_NHG, "BGP Per Source NHG Info");
 DEFINE_MTYPE_STATIC(BGPD, BGP_DEST_SOO_HE, "BGP Dest SOO hash entry Info");
 DEFINE_MTYPE_STATIC(BGPD, BGP_SOO_NHG_NEXTHOP_CACHE, "BGP SOO NHG nexthop cache Info");
 
+/* SOO timer wheel APIs */
+static unsigned int bgp_per_src_nhg_slot_key(const void *item)
+{
+	const struct bgp_per_src_nhg_hash_entry *nhe = item;
+	const struct ipaddr *ip = &nhe->ip;
+
+	if (IS_IPADDR_V4(ip))
+		return jhash_1word(ip->ipaddr_v4.s_addr, 0);
+
+	return jhash2(ip->ipaddr_v6.s6_addr32, array_size(ip->ipaddr_v6.s6_addr32), 0);
+}
+
+static void bgp_start_soo_timer(struct bgp *bgp, struct bgp_per_src_nhg_hash_entry *soo_entry)
+{
+	if (!bgp->per_src_nhg_soo_timer_wheel)
+		return;
+
+	if (!soo_entry->soo_timer_running) {
+		/*
+                 * if soo timer is not already running, insert it in to the
+                 * timer wheel
+                 */
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("bgp vrf %s per src nhg soo %pIA %s add to timer wheel",
+				   bgp->name_pretty, &soo_entry->ip,
+				   get_afi_safi_str(soo_entry->afi, soo_entry->safi, false));
+
+		frrtrace(1, frr_bgp, per_src_nhg_soo_timer_start, soo_entry);
+		wheel_add_item(bgp->per_src_nhg_soo_timer_wheel, soo_entry);
+		soo_entry->soo_timer_running = true;
+	}
+}
+
+static void bgp_stop_soo_timer(struct bgp *bgp, struct bgp_per_src_nhg_hash_entry *soo_entry)
+{
+	if (!bgp->per_src_nhg_soo_timer_wheel)
+		return;
+
+	if (soo_entry->soo_timer_running) {
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("bgp vrf %s per src nhg soo %pIA %s remove from timer wheel",
+				   bgp->name_pretty, &soo_entry->ip,
+				   get_afi_safi_str(soo_entry->afi, soo_entry->safi, false));
+		frrtrace(1, frr_bgp, per_src_nhg_soo_timer_stop, soo_entry);
+		wheel_remove_item(bgp->per_src_nhg_soo_timer_wheel, soo_entry);
+		soo_entry->soo_timer_running = false;
+	}
+}
+
+void bgp_per_src_nhg_soo_timer_wheel_init(struct bgp *bgp)
+{
+	if (!bgp->per_src_nhg_soo_timer_wheel) {
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("bgp vrf %s per src nhg soo timer wheel init total "
+				   "period %u ms slots %u",
+				   bgp->name_pretty, bgp->per_src_nhg_convergence_timer,
+				   BGP_PER_SRC_NHG_SOO_TIMER_WHEEL_SLOTS);
+
+		frrtrace(2, frr_bgp, per_src_nhg_soo_timer_wheel_init,
+			 bgp->per_src_nhg_convergence_timer, BGP_PER_SRC_NHG_SOO_TIMER_WHEEL_SLOTS);
+
+		bgp->per_src_nhg_soo_timer_wheel =
+			wheel_init(bm->master, bgp->per_src_nhg_convergence_timer,
+				   BGP_PER_SRC_NHG_SOO_TIMER_WHEEL_SLOTS, bgp_per_src_nhg_slot_key,
+				   bgp_per_src_nhg_timer_slot_run,
+				   "BGP per src NHG SoO Timer Wheel");
+	}
+}
+
+void bgp_per_src_nhg_soo_timer_wheel_delete(struct bgp *bgp)
+{
+	if (bgp->per_src_nhg_soo_timer_wheel) {
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("bgp vrf %s per src nhg soo timer wheel delete",
+				   bgp->name_pretty);
+
+		wheel_delete(bgp->per_src_nhg_soo_timer_wheel);
+		bgp->per_src_nhg_soo_timer_wheel = NULL;
+	}
+}
+
 /* SOO Nexthop Cache APIs */
 int bgp_nhg_nexthop_cache_compare(const struct bgp_nhg_nexthop_cache *a,
 				  const struct bgp_nhg_nexthop_cache *b)

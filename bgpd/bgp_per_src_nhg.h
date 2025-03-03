@@ -103,4 +103,8 @@ struct bgp_per_src_nhg_hash_entry {
 #define PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_ATTR_DEL   (1 << 7)
 };
 
+#define BGP_PER_SRC_NHG_SOO_TIMER_WHEEL_SLOTS 10
+/* in milli seconds, total timer wheel period */
+#define BGP_PER_SRC_NHG_SOO_TIMER_WHEEL_PERIOD 50
+
 #endif /* _BGP_PER_SRC_NHG_H */
