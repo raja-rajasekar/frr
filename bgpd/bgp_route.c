@@ -3329,6 +3329,7 @@ void bgp_best_selection(struct bgp *bgp, struct bgp_dest *dest,
 	result->old = old_select;
 	result->new = new_select;
 
+	bgp_per_src_nhg_upd_msg_check(bgp, afi, safi, dest);
 	return;
 }
 
@@ -3850,8 +3851,20 @@ void bgp_process_main_one(struct bgp *bgp, struct bgp_dest *dest, afi_t afi, saf
 	}
 
 	/* TODO BMP insert rib update hook */
-	if (old_select)
+	if (old_select) {
+		/*
+		 * since this is old selected, the path will not be removed in
+		 * bgp best path selection, handle the case here.
+		 */
+		if (!(afi == AFI_L2VPN && safi == SAFI_EVPN) &&
+		    CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_NHG_PER_ORIGIN) &&
+		    (old_select != new_select) &&
+		    !CHECK_FLAG(old_select->flags, BGP_PATH_MULTIPATH)) {
+			bgp_process_route_soo_attr(bgp, afi, safi, dest, old_select, false);
+			bgp_per_src_nhg_upd_msg_check(bgp, afi, safi, dest);
+		}
 		bgp_path_info_unset_flag(dest, old_select, BGP_PATH_SELECTED);
+	}
 	if (new_select) {
 		if (debug)
 			zlog_debug("%s: %pBD setting SELECTED flag", __func__,
@@ -5501,6 +5514,10 @@ void bgp_update(struct peer *peer, const struct prefix *p, uint32_t addpath_id,
 						dest, pi, BGP_PATH_STALE);
 					bgp_dest_set_defer_flag(dest, false);
 					bgp_process(bgp, dest, pi, afi, safi);
+				} else if ((CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi],
+						       BGP_FLAG_NHG_PER_ORIGIN)) &&
+					   (safi != SAFI_EVPN) && route_has_soo_attr(pi)) {
+					bgp_process(bgp, dest, pi, afi, safi);
 				}
 			}
 
@@ -5632,6 +5649,14 @@ void bgp_update(struct peer *peer, const struct prefix *p, uint32_t addpath_id,
 							bgp, afi, safi, p, pi);
 					else /* SAFI_MPLS_VPN */
 						vpn_leak_to_vrf_withdraw(pi);
+				}
+			}
+		} else {
+			if (!same_attr) {
+				if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi],
+					       BGP_FLAG_NHG_PER_ORIGIN)) {
+					bgp_process_route_soo_attr_change(bgp, afi, safi, dest, pi,
+									  attr_new);
 				}
 			}
 		}

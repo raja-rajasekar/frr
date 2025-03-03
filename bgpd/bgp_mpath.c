@@ -28,6 +28,7 @@
 #include "bgpd/bgp_ecommunity.h"
 #include "bgpd/bgp_lcommunity.h"
 #include "bgpd/bgp_mpath.h"
+#include "bgpd/bgp_per_src_nhg.h"
 
 /*
  * bgp_maximum_paths_set
@@ -424,6 +425,21 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 	bool all_paths_lb;
 	char path_buf[PATH_ADDPATH_STR_BUFFER];
 	bool old_mpath, new_mpath;
+	bool is_evpn = false;
+	struct bgp_table *table = NULL;
+	bool eval_soo_per_nhg = false;
+
+	table = bgp_dest_table(dest);
+	if (!table) {
+		return;
+	}
+	if (table->afi == AFI_L2VPN && table->safi == SAFI_EVPN)
+		is_evpn = true;
+
+	if (bgp &&
+	    CHECK_FLAG(bgp->per_src_nhg_flags[table->afi][table->safi], BGP_FLAG_NHG_PER_ORIGIN) &&
+	    !is_evpn)
+		eval_soo_per_nhg = true;
 
 	mpath_changed = false;
 	maxpaths = multipath_num;
@@ -539,6 +555,9 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 			 */
 			mpath_changed = true;
 			UNSET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
+			if (eval_soo_per_nhg)
+				bgp_process_route_soo_attr(table->bgp, table->afi, table->safi,
+							   dest, cur_iterator, false);
 		}
 
 		cur_iterator = cur_iterator->next;
@@ -562,6 +581,23 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 			SET_FLAG(new_best->flags, BGP_PATH_MULTIPATH_CHG);
 		if ((mpath_count) != old_mpath_count || old_cum_bw != cum_bw)
 			SET_FLAG(new_best->flags, BGP_PATH_LINK_BW_CHG);
+
+		if (eval_soo_per_nhg) {
+			if (route_has_soo_attr(new_best)) {
+				bgp_process_mpath_route_soo_attr(bgp, table->afi, table->safi, dest,
+								 new_best, true);
+			} else if (old_best && (old_best != new_best) &&
+				   route_has_soo_attr(old_best)) {
+				/*old best had soo, and new best doesn't have
+				it, so we need to remove from nhes use-nhid list
+				now and not wait for route install to complete
+				for removing form nhe-list.
+				*/
+				bgp_process_route_soo_attr_change(table->bgp, table->afi,
+								  table->safi, dest, old_best,
+								  new_best->attr);
+			}
+		}
 	}
 }
 

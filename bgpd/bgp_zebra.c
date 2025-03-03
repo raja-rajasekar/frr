@@ -54,6 +54,7 @@
 #include "bgpd/bgp_trace.h"
 #include "bgpd/bgp_community.h"
 #include "bgpd/bgp_lcommunity.h"
+#include "bgpd/bgp_per_src_nhg.h"
 
 /* All information about zebra. */
 struct zclient *zclient = NULL;
@@ -930,8 +931,7 @@ bool bgp_zebra_nexthop_set(union sockunion *local, union sockunion *remote,
 	return v6_ll_avail;
 }
 
-static struct in6_addr *
-bgp_path_info_to_ipv6_nexthop(struct bgp_path_info *path, ifindex_t *ifindex)
+struct in6_addr *bgp_path_info_to_ipv6_nexthop(struct bgp_path_info *path, ifindex_t *ifindex)
 {
 	struct in6_addr *nexthop = NULL;
 
@@ -1097,10 +1097,8 @@ int bgp_zebra_get_table_range(struct zclient *zc, uint32_t chunk_size,
 	return 0;
 }
 
-static bool update_ipv4nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp,
-					    struct in_addr *nexthop,
-					    struct attr *attr, bool is_evpn,
-					    struct zapi_nexthop *api_nh)
+bool update_ipv4nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp, struct in_addr *nexthop,
+				     struct attr *attr, bool is_evpn, struct zapi_nexthop *api_nh)
 {
 	api_nh->gate.ipv4 = *nexthop;
 	api_nh->vrf_id = nh_bgp->vrf_id;
@@ -1135,13 +1133,10 @@ static bool update_ipv4nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp,
 	return true;
 }
 
-static bool update_ipv6nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp,
-					    struct in6_addr *nexthop,
-					    ifindex_t ifindex,
-					    struct bgp_path_info *pi,
-					    struct bgp_path_info *best_pi,
-					    bool is_evpn,
-					    struct zapi_nexthop *api_nh)
+bool update_ipv6nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp, struct in6_addr *nexthop,
+				     ifindex_t ifindex, struct bgp_path_info *pi,
+				     struct bgp_path_info *best_pi, bool is_evpn,
+				     struct zapi_nexthop *api_nh)
 {
 	struct attr *attr;
 
@@ -1215,8 +1210,7 @@ static bool update_ipv6nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp,
 	return true;
 }
 
-static bool bgp_zebra_use_nhop_weighted(struct bgp *bgp, struct attr *attr,
-					uint32_t *nh_weight)
+bool bgp_zebra_use_nhop_weighted(struct bgp *bgp, struct attr *attr, uint32_t *nh_weight)
 {
 	/* zero link-bandwidth and link-bandwidth not present are treated
 	 * as the same situation.
@@ -1234,11 +1228,12 @@ static bool bgp_zebra_use_nhop_weighted(struct bgp *bgp, struct attr *attr,
 	return true;
 }
 
-static void bgp_zebra_announce_parse_nexthop(
-	struct bgp_path_info *info, const struct prefix *p, struct bgp *bgp,
-	struct zapi_route *api, unsigned int *valid_nh_count, afi_t afi,
-	safi_t safi, uint32_t *nhg_id, uint32_t *metric, route_tag_t *tag,
-	bool *allow_recursion)
+static void bgp_zebra_announce_parse_nexthop(struct bgp_dest *dest, struct bgp_path_info *info,
+					     const struct prefix *p, struct bgp *bgp,
+					     struct zapi_route *api, unsigned int *valid_nh_count,
+					     afi_t afi, safi_t safi, uint32_t *nhg_id,
+					     uint32_t *metric, route_tag_t *tag,
+					     bool *allow_recursion)
 {
 	struct zapi_nexthop *api_nh;
 	int nh_family;
@@ -1268,7 +1263,8 @@ static void bgp_zebra_announce_parse_nexthop(
 		nh_othervrf = 1;
 
 	/* EVPN MAC-IP routes are installed with a L3 NHG id */
-	if (nhg_id && bgp_evpn_path_es_use_nhg(bgp, info, nhg_id)) {
+	if (nhg_id && (bgp_evpn_path_es_use_nhg(bgp, info, nhg_id) ||
+		       bgp_per_src_nhg_use_nhgid(bgp, dest, info, nhg_id))) {
 		mpinfo = NULL;
 		zapi_route_set_nhg_id(api, nhg_id);
 	} else {
@@ -1543,6 +1539,7 @@ bgp_zebra_announce_actual(struct bgp_dest *dest, struct bgp_path_info *info,
 	uint32_t recursion_flag = 0;
 	struct bgp_table *table = bgp_dest_table(dest);
 	const struct prefix *p = bgp_dest_get_prefix(dest);
+	enum zclient_send_status ret;
 
 	if (table->safi == SAFI_FLOWSPEC) {
 		bgp_pbr_update_entry(bgp, p, info, table->afi, table->safi,
@@ -1589,9 +1586,8 @@ bgp_zebra_announce_actual(struct bgp_dest *dest, struct bgp_path_info *info,
 	/* Metric is currently based on the best-path only */
 	metric = info->attr->med;
 
-	bgp_zebra_announce_parse_nexthop(info, p, bgp, &api, &valid_nh_count,
-					 table->afi, table->safi, &nhg_id,
-					 &metric, &tag, &allow_recursion);
+	bgp_zebra_announce_parse_nexthop(dest, info, p, bgp, &api, &valid_nh_count, table->afi,
+					 table->safi, &nhg_id, &metric, &tag, &allow_recursion);
 
 	is_add = (valid_nh_count || nhg_id) ? true : false;
 
@@ -1664,8 +1660,10 @@ bgp_zebra_announce_actual(struct bgp_dest *dest, struct bgp_path_info *info,
 		zlog_debug("%s: %pFX: announcing to zebra (recursion %sset)",
 			   __func__, p, (recursion_flag ? "" : "NOT "));
 	}
-	return zclient_route_send(is_add ? ZEBRA_ROUTE_ADD : ZEBRA_ROUTE_DELETE,
-				  zclient, &api);
+	ret = zclient_route_send(is_add ? ZEBRA_ROUTE_ADD : ZEBRA_ROUTE_DELETE, zclient, &api);
+	bgp_process_route_transition_between_nhid(bgp, dest, info, false);
+
+	return ret;
 }
 
 
@@ -1727,6 +1725,7 @@ enum zclient_send_status bgp_zebra_withdraw_actual(struct bgp_dest *dest,
 	struct peer *peer;
 	struct bgp_table *table = bgp_dest_table(dest);
 	const struct prefix *p = bgp_dest_get_prefix(dest);
+	enum zclient_send_status ret;
 
 	if (table->safi == SAFI_FLOWSPEC) {
 		peer = info->peer;
@@ -1750,7 +1749,10 @@ enum zclient_send_status bgp_zebra_withdraw_actual(struct bgp_dest *dest,
 		zlog_debug("Tx route delete %s %pFX", bgp->name_pretty,
 			   &api.prefix);
 
-	return zclient_route_send(ZEBRA_ROUTE_DELETE, zclient, &api);
+	ret = zclient_route_send(ZEBRA_ROUTE_DELETE, zclient, &api);
+	bgp_process_route_transition_between_nhid(bgp, dest, info, true);
+
+	return ret;
 }
 
 /*
@@ -2828,9 +2830,9 @@ static int bgp_zebra_route_notify_owner(int command, struct zclient *zclient,
 				new_select = pi;
 		}
 		/* Advertise the route */
-		if (new_select)
+		if (new_select) {
 			group_announce_route(bgp, afi, safi, dest, new_select);
-		else {
+		} else {
 			flog_err(EC_BGP_INVALID_ROUTE,
 				 "selected route %pBD not found", dest);
 

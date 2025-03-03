@@ -62,6 +62,17 @@ DEFINE_MTYPE_STATIC(BGPD, BGP_PER_SRC_NHG, "BGP Per Source NHG Info");
 DEFINE_MTYPE_STATIC(BGPD, BGP_DEST_SOO_HE, "BGP Dest SOO hash entry Info");
 DEFINE_MTYPE_STATIC(BGPD, BGP_SOO_NHG_NEXTHOP_CACHE, "BGP SOO NHG nexthop cache Info");
 
+/* Extern APIs */
+extern int make_prefix(int afi, struct bgp_path_info *pi, struct prefix *p);
+extern struct in6_addr *bgp_path_info_to_ipv6_nexthop(struct bgp_path_info *path,
+						      ifindex_t *ifindex);
+
+/* Static */
+static void bgp_per_src_nhg_timer_slot_run(void *item);
+static void bgp_per_src_nhg_move_to_zebra_nhid_cb(struct hash_bucket *bucket, void *ctx);
+static void bgp_soo_zebra_route_install(struct bgp_per_src_nhg_hash_entry *nhe,
+					struct bgp_dest *dest);
+
 /* SOO timer wheel APIs */
 static unsigned int bgp_per_src_nhg_slot_key(const void *item)
 {
@@ -683,4 +694,928 @@ bool is_path_using_soo_nhg(const struct prefix *p, struct bgp_path_info *path, u
 	}
 
 	return using_soo_nhg;
+}
+
+/* Install 'Route with SOO' to Zebra */
+static void bgp_rt_with_soo_zebra_route_install(struct bgp_dest_soo_hash_entry *bgp_dest_soo_entry,
+						struct bgp_per_src_nhg_hash_entry *nhe)
+{
+	struct bgp_path_info *pi;
+	struct bgp_dest *dest = bgp_dest_soo_entry->dest;
+	for (pi = bgp_dest_get_bgp_path_info(dest); pi; pi = pi->next) {
+		if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED) &&
+		    (pi->type == ZEBRA_ROUTE_BGP && pi->sub_type == BGP_ROUTE_NORMAL) &&
+		    !BGP_PATH_HOLDDOWN(pi))
+			bgp_zebra_route_install(dest, pi, nhe->bgp, true, NULL, false);
+	}
+}
+
+/* Install 'SOO Route' to Zebra */
+static void bgp_soo_zebra_route_install(struct bgp_per_src_nhg_hash_entry *nhe,
+					struct bgp_dest *dest)
+{
+	struct bgp_path_info *pi;
+	for (pi = bgp_dest_get_bgp_path_info(dest); pi; pi = pi->next) {
+		if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED) &&
+		    (pi->type == ZEBRA_ROUTE_BGP && pi->sub_type == BGP_ROUTE_NORMAL))
+			bgp_zebra_route_install(dest, pi, nhe->bgp, true, NULL, false);
+	}
+
+	return;
+}
+
+/* Send ZEBRA_NHG_ADD to Zebra */
+static void bgp_per_src_nhg_add_send(struct bgp_per_src_nhg_hash_entry *nhe)
+{
+	uint32_t nhg_id = nhe->nhg_id;
+	struct zapi_nexthop *api_nh;
+	struct zapi_nhg api_nhg = {};
+	struct bgp_nhg_nexthop_cache_head *tree;
+	struct bgp_nhg_nexthop_cache *bnc_iter;
+	char buf[INET6_ADDRSTRLEN];
+
+	/* Skip installation of L3-NHG if host routes used */
+	if (!nhg_id)
+		return;
+
+	ipaddr2str(&nhe->ip, buf, sizeof(buf));
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("bgp vrf %s per src nhg %s %s id %d add to zebra", nhe->bgp->name_pretty,
+			   buf, get_afi_safi_str(nhe->afi, nhe->safi, false), nhe->nhg_id);
+
+	api_nhg.id = nhg_id;
+	SET_FLAG(api_nhg.flags, ZEBRA_FLAG_ALLOW_RECURSION);
+	tree = &nhe->nhg_nexthop_cache_table;
+
+	frr_each (bgp_nhg_nexthop_cache, tree, bnc_iter) {
+		if (!CHECK_FLAG(bnc_iter->nh.flags, BGP_NEXTHOP_VALID))
+			continue;
+
+		/* Don't overrun the zapi buffer. */
+		if (api_nhg.nexthop_num == MULTIPATH_NUM)
+			break;
+
+		/* convert to zapi format */
+		api_nh = &api_nhg.nexthops[api_nhg.nexthop_num];
+		zapi_nexthop_from_nexthop(api_nh, &bnc_iter->nh);
+		api_nh->weight = bnc_iter->nh_weight;
+		++api_nhg.nexthop_num;
+	}
+
+	if (!api_nhg.nexthop_num)
+		return;
+
+	zclient_nhg_send(zclient, ZEBRA_NHG_ADD, &api_nhg);
+	SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID);
+	UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING);
+	frrtrace(1, frr_bgp, per_src_nhg_add_send, nhe);
+	assert(bf_is_inited(nhe->bgp_soo_route_selected_pi_bitmap));
+	if (bf_is_inited(nhe->bgp_soo_route_installed_pi_bitmap))
+		bf_free(nhe->bgp_soo_route_installed_pi_bitmap);
+	nhe->bgp_soo_route_installed_pi_bitmap = bf_copy(nhe->bgp_soo_route_selected_pi_bitmap);
+}
+
+static void bgp_per_src_nhg_move_to_soo_nhid_cb(struct hash_bucket *bucket, void *ctx)
+{
+	struct bgp_dest_soo_hash_entry *route_with_soo_entry =
+		(struct bgp_dest_soo_hash_entry *)bucket->data;
+
+	if (route_with_soo_entry) {
+		/* only move those which are not using soo nhid yet */
+		if (!CHECK_FLAG(route_with_soo_entry->flags, DEST_USING_SOO_NHGID) &&
+		    is_soo_rt_installed_pi_subset_of_rt_with_soo_pi(route_with_soo_entry))
+			bgp_rt_with_soo_zebra_route_install(route_with_soo_entry,
+							    route_with_soo_entry->nhe);
+	}
+}
+
+static void bgp_per_src_nhg_move_to_zebra_nhid_cb(struct hash_bucket *bucket, void *ctx)
+{
+	struct bgp_dest_soo_hash_entry *route_with_soo_entry =
+		(struct bgp_dest_soo_hash_entry *)bucket->data;
+
+	if (route_with_soo_entry) {
+		/* only move those which are using soo nhid yet */
+		if (CHECK_FLAG(route_with_soo_entry->flags, DEST_USING_SOO_NHGID))
+			bgp_rt_with_soo_zebra_route_install(route_with_soo_entry,
+							    route_with_soo_entry->nhe);
+	}
+}
+
+/* SoO timer expiry */
+static void bgp_per_src_nhg_timer_slot_run(void *item)
+{
+	struct bgp_per_src_nhg_hash_entry *nhe = item;
+	struct bgp_dest *dest;
+
+	/* If SOO selected NHs match installed SOO NHG AND
+	 * all routes w/ SOO point to SOO NHG done
+	 *
+	 * 	# Case for moving routes from zebra NHG to SOO NHG
+	 * If SOO selected NHs match installed SOO NHG
+	 *   -- Evaluate all routes w/ SOO and update those were the SOO NHG's
+	 * NHs are a strict subset of route's selected NHs to SOO NHG; other
+	 * routes remain on zebra NHG
+	 *    -- done
+	 *
+	 * 	# Case for expanding the SOO NHG
+	 *  If the SOO's new selected NHs are still a strict subset of all the
+	 *  routes that already point to SOO_NHG expand the SOO_NHG done
+	 */
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("bgp vrf %s per src nhg soo %pIA %s timer slot run",
+			   nhe->bgp->name_pretty, &nhe->ip,
+			   get_afi_safi_str(nhe->afi, nhe->safi, false));
+
+	/* all routes with soo converged to soo route */
+	if (is_soo_rt_selected_pi_subset_of_all_rts_with_soo_using_soo_nhg_pi(nhe)) {
+		/* program the running ecmp and do NHG replace */
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("bgp vrf %s per src nhg soo route %pIA %s pi is subset of "
+				   "all route with soo using soo nhg "
+				   "remove soo entry from timer wheel",
+				   nhe->bgp->name_pretty, &nhe->ip,
+				   get_afi_safi_str(nhe->afi, nhe->safi, false));
+
+		frrtrace(2, frr_bgp, per_src_nhg_soo_timer_slot_run, nhe, 1);
+
+		if (nhe->refcnt)
+			if (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING))
+				bgp_per_src_nhg_add_send(nhe);
+
+		/* remove the timer from the timer wheel since processing is
+		 * done */
+		bgp_stop_soo_timer(nhe->bgp, nhe);
+	} else {
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("bgp vrf %s per src nhg soo route %pIA %s not all route "
+				   "with soo converged",
+				   nhe->bgp->name_pretty, &nhe->ip,
+				   get_afi_safi_str(nhe->afi, nhe->safi, false));
+		return;
+	}
+
+	dest = nhe->dest;
+	/* 'SOO route' dest */
+	if (!CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_INSTALL)) {
+		bgp_soo_zebra_route_install(nhe, dest);
+		SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_INSTALL);
+	}
+
+	/* Check for expansion case and then install the soo route with soo
+	 * nhid if it satisfies
+	 */
+
+	/* Walk all the 'routes with SoO' and move from zebra nhid to soo nhid
+	 */
+	hash_iterate(nhe->route_with_soo_table,
+		     (void (*)(struct hash_bucket *, void *))bgp_per_src_nhg_move_to_soo_nhid_cb,
+		     NULL);
+}
+
+/* Add to SOO NHG nexthop cache */
+static void bgp_per_src_nhg_nc_add(afi_t afi, struct bgp_per_src_nhg_hash_entry *nhe,
+				   struct bgp_path_info *pi)
+{
+	ifindex_t ifindex = 0;
+	struct prefix p = { 0 };
+	struct bgp_nhg_nexthop_cache *bnc;
+	uint32_t nh_weight;
+	bool do_wt_ecmp = false;
+
+	if (!pi->attr) {
+		zlog_err("pi attr is NULL for bgp(%s) peer %p afi:%d add bnc",
+			 nhe->bgp->name_pretty, pi->peer, afi);
+		return;
+	}
+
+	/* Validation for the ipv4 mapped ipv6 nexthop. */
+	if (IS_MAPPED_IPV6(&pi->attr->mp_nexthop_global)) {
+		afi = AFI_IP;
+	} else {
+		afi = BGP_ATTR_MP_NEXTHOP_LEN_IP6(pi->attr) ? AFI_IP6 : AFI_IP;
+	}
+
+	if (make_prefix(afi, pi, &p) < 0)
+		return;
+
+	/*
+	 * If it's a V6 nexthop, path is learnt from a v6 LL peer,
+	 * and if the NH prefix matches peer's LL address then
+	 * set the ifindex to peer's interface index so that
+	 * correct nexthop can be found in nexthop tree.
+	 *
+	 * NH could be set to different v6 LL address (compared to
+	 * peer's LL) using route-map. In such a scenario, do not set
+	 * the ifindex.
+	 */
+	if (afi == AFI_IP6 && IN6_IS_ADDR_LINKLOCAL(&pi->peer->connection->su.sin6.sin6_addr) &&
+	    (memcmp(&pi->peer->connection->su.sin6.sin6_addr, &p.u.prefix6,
+		    sizeof(struct in6_addr)) == 0))
+		ifindex = pi->peer->connection->su.sin6.sin6_scope_id;
+
+	nh_weight = 0;
+	/* Determine if we're doing weighted ECMP or not */
+	do_wt_ecmp = bgp_path_info_mpath_chkwtd(nhe->bgp, pi);
+	if (do_wt_ecmp) {
+		SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_DO_WECMP);
+	} else if (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_DO_WECMP)) {
+		do_wt_ecmp = true;
+	}
+
+	bnc = bnc_nhg_find(&nhe->nhg_nexthop_cache_table, &p, ifindex);
+	if (!bnc) {
+		int nh_othervrf = 0;
+		struct bgp *bgp_orig;
+		bool nh_updated = false;
+		bool is_parent_evpn;
+		struct zapi_nexthop api_nh = { 0 };
+
+		bnc = bnc_nhg_new(&nhe->nhg_nexthop_cache_table, &p, ifindex);
+		BGP_ORIGINAL_UPDATE(bgp_orig, pi, nhe->bgp);
+		is_parent_evpn = is_route_parent_evpn(pi);
+
+		if (afi == AFI_IP) {
+			(void)update_ipv4nh_for_route_install(nh_othervrf, bgp_orig,
+							      &pi->attr->nexthop, pi->attr,
+							      is_parent_evpn, &api_nh);
+			bnc->nh.gate.ipv4 = api_nh.gate.ipv4;
+		} else if (afi == AFI_IP6) {
+			ifindex_t ifindex = IFINDEX_INTERNAL;
+			struct in6_addr *nexthop;
+			struct bgp_path_info *select = NULL;
+
+			nexthop = bgp_path_info_to_ipv6_nexthop(pi, &ifindex);
+
+			if (!nexthop) {
+				(void)update_ipv4nh_for_route_install(nh_othervrf, bgp_orig,
+								      &pi->attr->nexthop, pi->attr,
+								      is_parent_evpn, &api_nh);
+				bnc->nh.gate.ipv4 = api_nh.gate.ipv4;
+			} else {
+				if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+					select = pi;
+
+				nh_updated = update_ipv6nh_for_route_install(nh_othervrf, bgp_orig,
+									     nexthop, ifindex, pi,
+									     select, is_parent_evpn,
+									     &api_nh);
+				if (!nh_updated) {
+					zlog_err("Unable to get ipv6 nexthop for bnc nhg %pFX(%d)(%s) peer %p afi:%d",
+						 &bnc->prefix, bnc->ifindex, nhe->bgp->name_pretty,
+						 pi->peer, afi);
+					bnc_nhg_free(bnc);
+					return;
+				}
+				bnc->nh.gate.ipv6 = api_nh.gate.ipv6;
+			}
+		}
+		bnc->nh.ifindex = api_nh.ifindex;
+		bnc->nh.type = api_nh.type;
+		bnc->nh.flags = api_nh.flags;
+		bnc->nh.vrf_id = bgp_orig->vrf_id;
+		SET_FLAG(bnc->nh.flags, NEXTHOP_FLAG_RECURSIVE);
+
+		if (do_wt_ecmp && pi->attr)
+			bgp_zebra_use_nhop_weighted(nhe->bgp, pi->attr, &nh_weight);
+
+		bnc->nh_weight = nh_weight;
+		SET_FLAG(bnc->nh.flags, BGP_NEXTHOP_VALID);
+		SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING);
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("Allocated bnc nhg %pFX(%d)(%s) peer %p refcnt:%d wei::%d attr wei:%d afi:%d ecmp:%d",
+				   &bnc->prefix, bnc->ifindex, nhe->bgp->name_pretty, pi->peer,
+				   nhe->refcnt, bnc->nh_weight, pi->attr->link_bw, afi, do_wt_ecmp);
+	} else {
+		if (do_wt_ecmp) {
+			bgp_zebra_use_nhop_weighted(nhe->bgp, pi->attr, &nh_weight);
+			if (bnc->nh_weight != nh_weight) {
+				bnc->nh_weight = nh_weight;
+				SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING);
+			}
+		}
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("Found existing bnc nhg %pFX(%d)(%s) peer %p refcnt:%d wei:%d attr wei:%d ecmp:%d",
+				   &bnc->prefix, bnc->ifindex, nhe->bgp->name_pretty, pi->peer,
+				   nhe->refcnt, bnc->nh_weight, pi->attr->link_bw, do_wt_ecmp);
+	}
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("Linked pi to bnc nhg %pFX(%d)(%s) peer %p", &bnc->prefix, bnc->ifindex,
+			   nhe->bgp->name_pretty, pi->peer);
+}
+
+static struct bgp_dest_soo_hash_entry *bgp_dest_soo_add(struct bgp_per_src_nhg_hash_entry *nhe,
+							struct bgp_dest *dest)
+{
+	struct bgp_dest_soo_hash_entry tmp_he;
+	struct bgp_dest_soo_hash_entry *dest_he = NULL;
+	char buf[INET6_ADDRSTRLEN];
+	char pfxprint[PREFIX2STR_BUFFER];
+	struct prefix *p = &dest->rn->p;
+
+	prefix2str(p, pfxprint, sizeof(pfxprint));
+
+	memset(&tmp_he, 0, sizeof(tmp_he));
+	prefix_copy(&tmp_he.p, p);
+	dest_he = hash_get(nhe->route_with_soo_table, &tmp_he, bgp_dest_soo_alloc);
+	dest_he->nhe = nhe;
+	dest_he->dest = dest;
+
+	bf_init(dest_he->bgp_pi_bitmap, BGP_PEER_INIT_BITMAP_SIZE);
+	bf_assign_zero_index(dest_he->bgp_pi_bitmap);
+
+	ipaddr2str(&nhe->ip, buf, sizeof(buf));
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("bgp vrf %s per src nhg %s %s dest soo %s add", nhe->bgp->name_pretty,
+			   buf, get_afi_safi_str(nhe->afi, nhe->safi, false), pfxprint);
+	return dest_he;
+}
+
+static struct bgp_per_src_nhg_hash_entry *bgp_per_src_nhg_add(struct bgp *bgp, struct ipaddr *ip,
+							      afi_t afi, safi_t safi)
+{
+	struct bgp_per_src_nhg_hash_entry tmp_nhe;
+	struct bgp_per_src_nhg_hash_entry *nhe = NULL;
+
+	memset(&tmp_nhe, 0, sizeof(tmp_nhe));
+	memcpy(&tmp_nhe.ip, ip, sizeof(struct ipaddr));
+
+	nhe = hash_get(bgp->per_src_nhg_table[afi][safi], &tmp_nhe, bgp_per_src_nhg_alloc);
+
+	nhe->bgp = bgp;
+	nhe->afi = afi;
+	nhe->safi = safi;
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("bgp vrf %s per src nhg soo entry create: %pIA %s", bgp->name_pretty,
+			   &nhe->ip, get_afi_safi_str(nhe->afi, nhe->safi, false));
+
+	bgp_dest_soo_init(nhe);
+	bf_init(nhe->bgp_soo_route_selected_pi_bitmap, BGP_PEER_INIT_BITMAP_SIZE);
+	bf_assign_zero_index(nhe->bgp_soo_route_selected_pi_bitmap);
+	bf_init(nhe->bgp_soo_route_installed_pi_bitmap, BGP_PEER_INIT_BITMAP_SIZE);
+	bf_assign_zero_index(nhe->bgp_soo_route_installed_pi_bitmap);
+
+	bgp_nhg_nexthop_cache_init(&nhe->nhg_nexthop_cache_table);
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+		char buf[INET6_ADDRSTRLEN];
+		ipaddr2str(ip, buf, sizeof(buf));
+		zlog_debug("bgp vrf %s per src nhg %s %s add", bgp->name_pretty, buf,
+			   get_afi_safi_str(nhe->afi, nhe->safi, false));
+	}
+
+	return nhe;
+}
+
+/* Check and see if SOO NHG can be replaced with new ECMP, this happens when the
+ * new selected ECMP of SOO route is a subset of installed ECMP of SOO route
+ * Example: Remote link failure scenarios
+ */
+void bgp_per_src_nhg_upd_msg_check(struct bgp *bgp, afi_t afi, safi_t safi, struct bgp_dest *dest)
+{
+	struct ipaddr ip;
+	struct bgp_per_src_nhg_hash_entry *nhe;
+	struct bgp_table *table = NULL;
+	struct prefix *p = &dest->rn->p;
+
+	table = bgp_dest_table(dest);
+	if (table &&
+	    ((table->afi == AFI_L2VPN && table->safi == SAFI_EVPN) ||
+	     !CHECK_FLAG(bgp->per_src_nhg_flags[table->afi][table->safi], BGP_FLAG_NHG_PER_ORIGIN)))
+		return;
+
+	memset(&ip, 0, sizeof(ip));
+	SET_IPADDR_V4(&ip);
+
+	if (p) {
+		if (p->family == AF_INET) {
+			memcpy(&ip.ipaddr_v4, &dest->rn->p.u.prefix4, sizeof(dest->rn->p.u.prefix4));
+		} else if (p->family == AF_INET6) {
+			struct in_addr ipv4;
+			if (IS_MAPPED_IPV6(&p->u.prefix6)) {
+				ipv4_mapped_ipv6_to_ipv4(&p->u.prefix6, &ipv4);
+				memcpy(&ip.ipaddr_v4, &ipv4, sizeof(ipv4));
+			}
+		}
+	}
+
+	nhe = bgp_per_src_nhg_find(bgp, &ip, afi, safi);
+	/*  bgp_soo_route_installed_pi_bitmap -> what is installed in the kernel
+	 *	(old/existing)
+	 *	bgp_soo_route_selected_pi_bitmap 		 -> what is
+	 *received from BGP update (new)
+	 *
+	 *	We can have 4 cases between bgp_soo_route_selected_pi_bitmap and
+	 *	bgp_soo_route_installed_pi_bitmap
+	 *	Case 1: bgp_soo_route_selected_pi_bitmap and
+	 *	bgp_soo_route_installed_pi_bitmap are 'DISJOINT'
+	 *
+	 *	Case 2: bgp_soo_route_selected_pi_bitmap and
+	 *	bgp_soo_route_installed_pi_bitmap are 'OVERLAPPING'
+	 *
+	 *	Case 3: bgp_soo_route_selected_pi_bitmap is 'SUBSET' of
+	 *	bgp_soo_route_installed_pi_bitmap
+	 *		Case a:
+	 *			ECMP Case (3).(a).(i): ECMP Shrink
+	 *				Example 1: old = NH1 NH2 NH3
+	 *							new = NH1 NH3
+	 *		Case b: W-ECMP Case
+	 *			(3).(b).(i): Same ECMP but weights increase or
+	 *decrease Example 1: old = NH1,255/NH2,85/NH3,127 new =
+	 *NH1,255/NH2,255/NH3,255 Example 2: old = NH1,255/NH2,255/NH3,255 new =
+	 *NH1,255/NH2,85/NH3,127 case (3).(b).(ii):ECMP Shrink with weights
+	 *increase or decrease Example 1: old = NH1,255/NH2,255/NH3,166 new =
+	 *NH1,255/NH3,85 Example 2: old = NH1,255/NH2,255/NH3,166 new =
+	 *NH1,255/NH3,255
+	 *
+	 *	Case 4: bgp_soo_route_selected_pi_bitmap is 'SUPERSET' of
+	 *	bgp_soo_route_installed_pi_bitmap
+	 */
+	if (nhe && nhe->refcnt && CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING)) {
+		/* running is subset of installed - shrink case - immediate nhg
+		 * replace
+		 */
+		if (bf_is_subset(&nhe->bgp_soo_route_selected_pi_bitmap,
+				 &nhe->bgp_soo_route_installed_pi_bitmap)) {
+			/* Case 3: Subset (shrink or link bandwidth change)
+			 * NHG replace can be done immediately without waiting
+			 * for any timer
+			 */
+			if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+				char buf1[BUFSIZ] = { 0 };
+				char buf2[BUFSIZ] = { 0 };
+				zlog_debug("bgp vrf %s per src nhg soo route upd: %pIA %s NHG replace"
+					   "(shrink or link bandwidth change) selected pi %s, installed pi %s",
+					   nhe->bgp->name_pretty, &nhe->ip,
+					   get_afi_safi_str(nhe->afi, nhe->safi, false),
+					   print_bitfield(&nhe->bgp_soo_route_selected_pi_bitmap,
+							  buf1),
+					   print_bitfield(&nhe->bgp_soo_route_installed_pi_bitmap,
+							  buf2));
+			}
+			frrtrace(2, frr_bgp, per_src_nhg_soo_rt_dest_ecmp_check, nhe, 1);
+			bgp_per_src_nhg_add_send(nhe);
+		} else {
+			/* Case 1: Disjoint
+			 * Case 2: Overlap
+			 * Case 4: Superset
+			 * NHG replace will be evaluted after SOO timer expiry,
+			 * start the timer if its not already running
+			 */
+			if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+				char buf1[BUFSIZ] = { 0 };
+				char buf2[BUFSIZ] = { 0 };
+				zlog_debug("bgp vrf %s per src nhg soo route upd: %pIA %s NHG start SOO timer"
+					   "selected pi %s is not subset of installed pi %s",
+					   nhe->bgp->name_pretty, &nhe->ip,
+					   get_afi_safi_str(nhe->afi, nhe->safi, false),
+					   print_bitfield(&nhe->bgp_soo_route_selected_pi_bitmap,
+							  buf1),
+					   print_bitfield(&nhe->bgp_soo_route_installed_pi_bitmap,
+							  buf2));
+			}
+			frrtrace(2, frr_bgp, per_src_nhg_soo_rt_dest_ecmp_check, nhe, 2);
+			/*
+			 * case where installed path subset is disjoint/overlap/superset
+			 * from selected path subset
+			 */
+			bgp_start_soo_timer(bgp, nhe);
+		}
+	}
+}
+
+/* NHG ID APIs*/
+void bgp_process_route_transition_between_nhid(struct bgp *bgp, struct bgp_dest *dest,
+					       struct bgp_path_info *pi, bool withdraw)
+{
+	struct in_addr in;
+	struct bgp_dest_soo_hash_entry *dest_he;
+	struct bgp_per_src_nhg_hash_entry *nhe;
+	bool is_evpn = false;
+	struct bgp_table *table = NULL;
+	struct ipaddr ip;
+	bool is_soo_route = false;
+
+	memset(&ip, 0, sizeof(ip));
+
+	table = bgp_dest_table(dest);
+	if (!table)
+		return;
+
+	if (table->afi == AFI_L2VPN && table->safi == SAFI_EVPN)
+		is_evpn = true;
+
+	if (!CHECK_FLAG(bgp->per_src_nhg_flags[table->afi][table->safi], BGP_FLAG_NHG_PER_ORIGIN) ||
+	    is_evpn)
+		return;
+
+
+	if (route_has_soo_attr(pi)) {
+		is_soo_route = bgp_is_soo_route(dest, pi, &in);
+		SET_IPADDR_V4(&ip);
+		memcpy(&ip.ipaddr_v4, &in, sizeof(ip.ipaddr_v4));
+
+		nhe = bgp_per_src_nhg_find(bgp, &ip, table->afi, table->safi);
+		if (!nhe)
+			return;
+
+		if (is_soo_route) {
+			if (withdraw || CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING))
+				UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED);
+			if (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING) &&
+			    !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID) &&
+			    !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED) &&
+			    !nhe->route_with_soo_use_nhid_cnt) {
+				bgp_per_src_nhg_del_send(nhe);
+				bgp_per_src_nhg_del(nhe);
+			}
+		} else {
+			dest_he = bgp_dest_soo_find(nhe, &dest->rn->p);
+			if (!dest_he) {
+				if (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING) &&
+				    !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID) &&
+				    !CHECK_FLAG(nhe->flags,
+						PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED) &&
+				    !nhe->route_with_soo_use_nhid_cnt) {
+					bgp_per_src_nhg_del_send(nhe);
+					bgp_per_src_nhg_del(nhe);
+				}
+				return;
+			}
+
+			if (withdraw && CHECK_FLAG(dest_he->flags, DEST_USING_SOO_NHGID)) {
+				nhe->route_with_soo_use_nhid_cnt--;
+				UNSET_FLAG(dest_he->flags, DEST_USING_SOO_NHGID);
+			}
+
+			if (CHECK_FLAG(dest_he->flags, DEST_SOO_DEL_PENDING))
+				bgp_dest_soo_del(dest_he, nhe);
+		}
+	}
+}
+
+bool bgp_per_src_nhg_use_nhgid(struct bgp *bgp, struct bgp_dest *dest, struct bgp_path_info *pi,
+			       uint32_t *nhg_id)
+{
+	struct in_addr in;
+	struct bgp_dest_soo_hash_entry *dest_he;
+	struct bgp_per_src_nhg_hash_entry *nhe;
+	bool is_evpn = false;
+	struct bgp_table *table = NULL;
+	struct ipaddr ip;
+	bool is_soo_route = false;
+	char buf[INET6_ADDRSTRLEN];
+
+	memset(&ip, 0, sizeof(ip));
+
+	table = bgp_dest_table(dest);
+	if (!table)
+		return false;
+
+	if (table->afi == AFI_L2VPN && table->safi == SAFI_EVPN)
+		is_evpn = true;
+
+	if (!CHECK_FLAG(bgp->per_src_nhg_flags[table->afi][table->safi], BGP_FLAG_NHG_PER_ORIGIN) ||
+	    is_evpn)
+		return false;
+
+	if (route_has_soo_attr(pi)) {
+		is_soo_route = bgp_is_soo_route(dest, pi, &in);
+		SET_IPADDR_V4(&ip);
+		memcpy(&ip.ipaddr_v4, &in, sizeof(ip.ipaddr_v4));
+
+		nhe = bgp_per_src_nhg_find(bgp, &ip, table->afi, table->safi);
+		if (!nhe)
+			return false;
+
+		ipaddr2str(&nhe->ip, buf, sizeof(buf));
+		if (is_soo_route) {
+			if (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID) ||
+			    (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING) &&
+			     !CHECK_FLAG(bgp->per_src_nhg_flags[table->afi][table->safi],
+					 BGP_FLAG_CONFIG_DEL_PENDING) &&
+			     !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_ATTR_DEL))) {
+				SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED);
+				*nhg_id = nhe->nhg_id;
+				if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+					zlog_debug("bgp vrf %s per src nhg %s %s "
+						   "add to soo nhid",
+						   nhe->bgp->name_pretty, buf,
+						   get_afi_safi_str(nhe->afi, nhe->safi, false));
+				frrtrace(2, frr_bgp, per_src_nhg_soo_rt_use_nhgid, nhe, 1);
+				return true;
+			} else {
+				if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+					zlog_debug("bgp vrf %s per src nhg %s %s "
+						   "del from soo nhid",
+						   nhe->bgp->name_pretty, buf,
+						   get_afi_safi_str(nhe->afi, nhe->safi, false));
+				frrtrace(2, frr_bgp, per_src_nhg_soo_rt_use_nhgid, nhe, 2);
+				return false;
+			}
+		} else {
+			dest_he = bgp_dest_soo_find(nhe, &dest->rn->p);
+			char buf[INET6_ADDRSTRLEN];
+			char pfxprint[PREFIX2STR_BUFFER];
+			if (!dest_he)
+				return false;
+
+			prefix2str(&dest_he->p, pfxprint, sizeof(pfxprint));
+			if ((!is_soo_rt_installed_pi_subset_of_rt_with_soo_pi(dest_he) &&
+			     (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID))) ||
+			    (CHECK_FLAG(bgp->per_src_nhg_flags[table->afi][table->safi],
+					BGP_FLAG_CONFIG_DEL_PENDING)) ||
+			    CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_ATTR_DEL) ||
+			    CHECK_FLAG(dest_he->flags, DEST_SOO_ROUTE_ATTR_DEL) ||
+			    ((!CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID)) &&
+			     (!CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_CLEAR_ONLY)) &&
+			     (!CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING)))) {
+				if (CHECK_FLAG(dest_he->flags, DEST_USING_SOO_NHGID)) {
+					nhe->route_with_soo_use_nhid_cnt--;
+					UNSET_FLAG(dest_he->flags, DEST_USING_SOO_NHGID);
+					if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+						zlog_debug("bgp vrf %s per src nhg %s %s dest soo %s "
+							   "del from soo nhid use list",
+							   nhe->bgp->name_pretty, buf,
+							   get_afi_safi_str(nhe->afi, nhe->safi,
+									    false),
+							   pfxprint);
+					frrtrace(3, frr_bgp, per_src_nhg_rt_with_soo_use_nhgid, nhe,
+						 dest_he, 1);
+				}
+				return false;
+			}
+
+			if (!CHECK_FLAG(dest_he->flags, DEST_USING_SOO_NHGID)) {
+				nhe->route_with_soo_use_nhid_cnt++;
+				SET_FLAG(dest_he->flags, DEST_USING_SOO_NHGID);
+				if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+					zlog_debug("bgp vrf %s per src nhg %s dest soo %s %s"
+						   "add to soo nhid use list",
+						   nhe->bgp->name_pretty, buf,
+						   get_afi_safi_str(nhe->afi, nhe->safi, false),
+						   pfxprint);
+				}
+				frrtrace(3, frr_bgp, per_src_nhg_rt_with_soo_use_nhgid, nhe,
+					 dest_he, 2);
+			}
+			*nhg_id = nhe->nhg_id;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/* Process 'Route with SoO' */
+static void bgp_process_route_with_soo_attr(struct bgp *bgp, afi_t afi, safi_t safi,
+					    struct bgp_dest *dest, struct bgp_path_info *pi,
+					    struct in_addr *ipaddr, bool is_add, bool soo_attr_del)
+{
+	struct bgp_dest_soo_hash_entry *dest_he;
+	struct bgp_per_src_nhg_hash_entry *nhe;
+	struct ipaddr ip;
+	char buf[INET6_ADDRSTRLEN];
+	char pfxprint[PREFIX2STR_BUFFER];
+
+	prefix2str(&dest->rn->p, pfxprint, sizeof(pfxprint));
+
+	memset(&ip, 0, sizeof(ip));
+	SET_IPADDR_V4(&ip);
+	memcpy(&ip.ipaddr_v4, ipaddr, sizeof(ip.ipaddr_v4));
+	ipaddr2str(&ip, buf, sizeof(buf));
+
+	nhe = bgp_per_src_nhg_find(bgp, &ip, afi, safi);
+	if (!nhe) {
+		if (is_add)
+			nhe = bgp_per_src_nhg_add(bgp, &ip, afi, safi);
+		else {
+			if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+				zlog_debug("bgp vrf %s per src nhg not found %s %s dest soo %s del",
+					   bgp->name_pretty, buf,
+					   get_afi_safi_str(afi, safi, false), pfxprint);
+			return;
+		}
+	} else {
+		/*
+		 * handle case where soo route was created due to arrival  route
+		 * with soo arrive first.
+		 */
+		if (!is_add) {
+			if (!nhe->refcnt &&
+			    !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED) &&
+			    !nhe->route_with_soo_use_nhid_cnt)
+				SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING);
+		}
+	}
+
+	dest_he = bgp_dest_soo_find(nhe, &dest->rn->p);
+	if (!dest_he) {
+		if (is_add) {
+			if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+				zlog_debug("bgp vrf %s per src nhg route with soo %s %s dest %s "
+					   "peer %pSU idx %d add",
+					   bgp->name_pretty, buf, get_afi_safi_str(afi, safi, false),
+					   bgp_dest_get_prefix_str(dest), &pi->peer->connection->su,
+					   pi->peer->bit_index);
+			dest_he = bgp_dest_soo_add(nhe, dest);
+		} else {
+			if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+				zlog_debug("bgp vrf %s per src nhg %s %s dest soo %s not found for del oper",
+					   bgp->name_pretty, buf,
+					   get_afi_safi_str(afi, safi, false), pfxprint);
+			return;
+		}
+	} else {
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+			zlog_debug("bgp vrf %s per src nhg route with soo %s %s dest %s "
+				   "peer %pSU idx %d %s",
+				   bgp->name_pretty, buf, get_afi_safi_str(afi, safi, false),
+				   bgp_dest_get_prefix_str(dest), &pi->peer->connection->su,
+				   pi->peer->bit_index, is_add ? "upd" : "del");
+	}
+
+	if (is_add) {
+		if (!bf_test_index(dest_he->bgp_pi_bitmap, pi->peer->bit_index)) {
+			bf_set_bit(dest_he->bgp_pi_bitmap, pi->peer->bit_index);
+			dest_he->refcnt++;
+			bgp_path_info_set_flag(dest, pi, BGP_PATH_ATTR_CHANGED);
+		}
+	} else {
+		if (bf_test_index(dest_he->bgp_pi_bitmap, pi->peer->bit_index)) {
+			bf_release_index(dest_he->bgp_pi_bitmap, pi->peer->bit_index);
+			dest_he->refcnt--;
+			if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+				zlog_debug("bgp vrf %s per src nhg route with soo %s %s dest %s "
+					   "peer %pSU idx %d %s refcnt:%d soo_attr_del:%d",
+					   bgp->name_pretty, buf, get_afi_safi_str(afi, safi, false),
+					   bgp_dest_get_prefix_str(dest), &pi->peer->connection->su,
+					   pi->peer->bit_index, is_add ? "upd" : "del",
+					   dest_he->refcnt, soo_attr_del);
+			bgp_path_info_set_flag(dest, pi, BGP_PATH_ATTR_CHANGED);
+
+			if (soo_attr_del) {
+				if (!dest_he->refcnt) {
+					if (CHECK_FLAG(dest_he->flags, DEST_USING_SOO_NHGID)) {
+						char buf[INET6_ADDRSTRLEN];
+						char pfxprint[PREFIX2STR_BUFFER];
+						ipaddr2str(&nhe->ip, buf, sizeof(buf));
+						prefix2str(&dest_he->p, pfxprint, sizeof(pfxprint));
+						nhe->route_with_soo_use_nhid_cnt--;
+						UNSET_FLAG(dest_he->flags, DEST_USING_SOO_NHGID);
+						SET_FLAG(dest_he->flags, DEST_SOO_ROUTE_ATTR_DEL);
+						if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+							zlog_debug("bgp vrf %s per src nhg %s %s dest soo %s "
+								   "del from soo nhid use list",
+								   nhe->bgp->name_pretty, buf,
+								   get_afi_safi_str(afi, safi,
+										    false),
+								   pfxprint);
+						bgp_zebra_announce_actual(dest, pi, bgp);
+					}
+				}
+			}
+
+			if (!dest_he->refcnt)
+				bgp_process_dest_soo_del(dest_he);
+		}
+	}
+}
+
+/* Process 'SoO Route' */
+static void bgp_process_soo_route(struct bgp *bgp, afi_t afi, safi_t safi, struct bgp_dest *dest,
+				  struct bgp_path_info *pi, struct in_addr *ipaddr, bool is_add,
+				  bool soo_attr_del)
+{
+	struct ipaddr ip;
+	struct bgp_per_src_nhg_hash_entry *nhe;
+
+	/* find-create nh */
+	memset(&ip, 0, sizeof(ip));
+	SET_IPADDR_V4(&ip);
+	memcpy(&ip.ipaddr_v4, ipaddr, sizeof(ip.ipaddr_v4));
+
+	nhe = bgp_per_src_nhg_find(bgp, &ip, afi, safi);
+	if (!nhe) {
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+			char buf[INET6_ADDRSTRLEN];
+			ipaddr2str(&ip, buf, sizeof(buf));
+			zlog_debug("bgp vrf %s per src nhg soo route soo %s %s dest %s "
+				   "peer %pSU idx %d add",
+				   bgp->name_pretty, buf, get_afi_safi_str(afi, safi, false),
+				   bgp_dest_get_prefix_str(dest), &pi->peer->connection->su,
+				   pi->peer->bit_index);
+		}
+		if (is_add) {
+			nhe = bgp_per_src_nhg_add(bgp, &ip, afi, safi);
+			nhe->dest = dest;
+			/* Even though NHG is allocated here, it is programed
+			 * in to zebra after soo timer expiry
+			 */
+			nhe->nhg_id = bgp_nhg_id_alloc(PER_SRC_NHG);
+			bgp_start_soo_timer(bgp, nhe);
+		} else
+			return;
+	} else {
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+			char buf[INET6_ADDRSTRLEN];
+			ipaddr2str(&ip, buf, sizeof(buf));
+			zlog_debug("bgp vrf %s per src nhg soo route soo %s %s dest %s "
+				   "peer %pSU idx %d %s soo_attr_del:%d",
+				   bgp->name_pretty, buf, get_afi_safi_str(afi, safi, false),
+				   bgp_dest_get_prefix_str(dest), &pi->peer->connection->su,
+				   pi->peer->bit_index, is_add ? "upd" : "del", soo_attr_del);
+		}
+		if (is_add) {
+			/* Even though NHG is allocated here, it is
+			   programed in to zebra after soo timer expiry */
+			if (!nhe->nhg_id) {
+				nhe->nhg_id = bgp_nhg_id_alloc(PER_SRC_NHG);
+				bgp_start_soo_timer(bgp, nhe);
+			}
+			if (!nhe->dest)
+				nhe->dest = dest;
+		}
+	}
+
+	if (is_add) {
+		if (!bf_test_index(nhe->bgp_soo_route_selected_pi_bitmap, pi->peer->bit_index)) {
+			bf_set_bit(nhe->bgp_soo_route_selected_pi_bitmap, pi->peer->bit_index);
+			nhe->refcnt++;
+		}
+		bgp_per_src_nhg_nc_add(afi, nhe, pi);
+	} else {
+		if (bf_test_index(nhe->bgp_soo_route_selected_pi_bitmap, pi->peer->bit_index)) {
+			bf_release_index(nhe->bgp_soo_route_selected_pi_bitmap, pi->peer->bit_index);
+			nhe->refcnt--;
+			if (soo_attr_del && !nhe->refcnt) {
+				UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED);
+				SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_ATTR_DEL);
+			}
+		}
+
+		bgp_per_src_nhg_nc_del(afi, nhe, pi);
+	}
+
+	if (!nhe->refcnt) {
+		bgp_per_src_nhg_delete(nhe);
+		if (soo_attr_del)
+			bgp_zebra_announce_actual(dest, pi, bgp);
+	}
+}
+
+/* Check if route has soo attribute and process 'SOO route' or 'Route with SOO'
+ */
+void bgp_process_route_soo_attr(struct bgp *bgp, afi_t afi, safi_t safi, struct bgp_dest *dest,
+				struct bgp_path_info *pi, bool is_add)
+{
+	struct in_addr ip;
+
+	if (route_has_soo_attr(pi)) {
+		if (bgp_is_soo_route(dest, pi, &ip))
+			/* processing of 'soo route' */
+			bgp_process_soo_route(bgp, afi, safi, dest, pi, &ip, is_add, false);
+		else
+			/* processing of 'route with soo' */
+			bgp_process_route_with_soo_attr(bgp, afi, safi, dest, pi, &ip, is_add,
+							false);
+	}
+}
+
+/* Process route up on change of 'SOO attribute' */
+void bgp_process_route_soo_attr_change(struct bgp *bgp, afi_t afi, safi_t safi,
+				       struct bgp_dest *dest, struct bgp_path_info *pi,
+				       struct attr *new_attr)
+{
+	struct in_addr ip;
+
+	/* old select has the soo attr attached but new one doesn't */
+	if (is_soo_attr(pi->attr) && !is_soo_attr(new_attr)) {
+		/* when soo attr is removed from path, we need to immediately
+		 * announce route to zebra, as we can delete nhg only when all
+		 * routes are moved to zebra nhgid.
+		 */
+		if (bgp_is_soo_route(dest, pi, &ip)) {
+			/* processing of 'soo route' */
+			bgp_process_soo_route(bgp, afi, safi, dest, pi, &ip, false, true);
+
+		} else {
+			/* processing of 'route with soo' */
+			bgp_process_route_with_soo_attr(bgp, afi, safi, dest, pi, &ip, false, true);
+		}
+	}
+}
+
+/* Process all multipaths of a bgp_dest for SOO attributes*/
+void bgp_process_mpath_route_soo_attr(struct bgp *bgp, afi_t afi, safi_t safi, struct bgp_dest *dest,
+				      struct bgp_path_info *mpinfo, bool is_add)
+{
+	for (; mpinfo; mpinfo = bgp_path_info_mpath_next(mpinfo)) {
+		bgp_process_route_soo_attr(bgp, afi, safi, dest, mpinfo, is_add);
+	}
 }
