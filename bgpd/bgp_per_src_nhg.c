@@ -439,3 +439,71 @@ void bgp_per_src_nhg_stop(struct bgp *bgp)
 		}
 	}
 }
+
+/* Check if 'SoO route' installed pi bitmap is a subset of 'route with SoO' pi
+ * bitmap
+ */
+static bool is_soo_rt_installed_pi_subset_of_rt_with_soo_pi(
+	struct bgp_dest_soo_hash_entry *bgp_dest_with_soo_entry)
+{
+	if (!bgp_dest_with_soo_entry)
+		return false;
+
+	bitfield_t rt_with_soo_pi_bitmap = bgp_dest_with_soo_entry->bgp_pi_bitmap;
+	bitfield_t soo_rt_installed_pi_bitmap =
+		bgp_dest_with_soo_entry->nhe->bgp_soo_route_installed_pi_bitmap;
+
+	return bf_is_subset(&soo_rt_installed_pi_bitmap, &rt_with_soo_pi_bitmap);
+}
+
+/* Check if 'SoO route' selected pi bitmap is a subset of 'route with SoO' pi
+ * bitmap
+ */
+static bool is_soo_rt_selected_pi_subset_of_rt_with_soo_pi(
+	struct bgp_dest_soo_hash_entry *bgp_dest_with_soo_entry)
+{
+	if (!bgp_dest_with_soo_entry)
+		return false;
+
+	bitfield_t rt_with_soo_pi_bitmap = bgp_dest_with_soo_entry->bgp_pi_bitmap;
+	bitfield_t soo_rt_selected_pi_bitmap =
+		bgp_dest_with_soo_entry->nhe->bgp_soo_route_selected_pi_bitmap;
+
+	return bf_is_subset(&soo_rt_selected_pi_bitmap, &rt_with_soo_pi_bitmap);
+}
+
+static void bgp_per_src_nhg_subset_check_cb(struct hash_bucket *bucket, void *ctx)
+{
+	bool *is_subset_of_all_routes = ctx;
+	struct bgp_dest_soo_hash_entry *route_with_soo_entry =
+		(struct bgp_dest_soo_hash_entry *)bucket->data;
+
+	if (route_with_soo_entry) {
+		if (CHECK_FLAG(route_with_soo_entry->flags, DEST_USING_SOO_NHGID)) {
+			/* Check if 'SoO route' pi bitmap a subset of 'route
+			 * with SoO' */
+			if (!is_soo_rt_selected_pi_subset_of_rt_with_soo_pi(route_with_soo_entry))
+				*is_subset_of_all_routes = false;
+		}
+	}
+}
+
+/* Check if SOO route path info bitmap is subset of path info bitmap of "all"
+ * the routes with SOO. This function walks all the "route with SOO" and checks
+ * if "SOO route" path info bitmap is a subset of each one of them
+ */
+static bool is_soo_rt_selected_pi_subset_of_all_rts_with_soo_using_soo_nhg_pi(
+	struct bgp_per_src_nhg_hash_entry *bgp_per_src_nhg_entry)
+{
+	bool is_subset_of_all_routes = true;
+
+	/* Walk only the 'routes with SoO' that use SoO NHG, not ALL 'route with
+	 * SoO'
+	 */
+	hash_iterate(bgp_per_src_nhg_entry->route_with_soo_table,
+		     (void (*)(struct hash_bucket *, void *))bgp_per_src_nhg_subset_check_cb,
+		     &is_subset_of_all_routes);
+
+	/* 'SoO route' pi bitmap is subset of ALL 'route with SoO' */
+	return is_subset_of_all_routes;
+}
