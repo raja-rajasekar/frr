@@ -441,6 +441,7 @@ extern bool evpn_addr_same(const struct evpn_addr *e1, const struct evpn_addr *e
 #define prefix_copy(a, b) ({ memset(a, 0, sizeof(*a)); prefix_copy(a, b); })
 #endif
 
+extern struct prefix *in6addr2hostprefix(struct in6_addr *in6_addr, struct prefix *prefix);
 extern struct prefix *sockunion2hostprefix(const union sockunion *su,
 					   struct prefix *p);
 extern void prefix2sockunion(const struct prefix *p, union sockunion *su);
@@ -487,6 +488,9 @@ extern char *evpn_es_df_alg2str(uint8_t df_alg, char *buf, int buf_len);
 extern void prefix_evpn_hexdump(const struct prefix_evpn *p);
 extern bool ipv4_unicast_valid(const struct in_addr *addr);
 extern int evpn_prefix2prefix(const struct prefix *evpn, struct prefix *to);
+
+
+extern void inaddrv42prefix(const struct in_addr *ip, uint16_t prefixlen, struct prefix *p);
 
 static inline int ipv6_martian(const struct in6_addr *addr)
 {

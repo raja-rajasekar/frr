@@ -507,3 +507,180 @@ static bool is_soo_rt_selected_pi_subset_of_all_rts_with_soo_using_soo_nhg_pi(
 	/* 'SoO route' pi bitmap is subset of ALL 'route with SoO' */
 	return is_subset_of_all_routes;
 }
+
+/* Utils */
+static bool bgp_is_soo_route(struct bgp_dest *dest, struct bgp_path_info *pi, struct in_addr *ip)
+{
+	struct prefix to;
+	struct prefix *p = &dest->rn->p;
+
+	memset(ip, 0, sizeof(*ip));
+	if (!route_get_ip_from_soo_attr(pi, ip))
+		return false;
+
+	if (p) {
+		if (p->family == AF_INET) {
+			inaddrv42prefix(ip, 32, &to);
+			if (prefix_same(&to, p))
+				return true;
+		} else if (p->family == AF_INET6) {
+			struct in_addr ipv4;
+			if (IS_MAPPED_IPV6(&p->u.prefix6)) {
+				ipv4_mapped_ipv6_to_ipv4(&p->u.prefix6, &ipv4);
+				if (IPV4_ADDR_SAME(&ipv4, ip))
+					return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+bool bgp_check_is_soo_route(struct bgp *bgp, struct bgp_dest *dest, struct bgp_path_info *pi)
+{
+	struct in_addr ip;
+
+	if (route_has_soo_attr(pi) && bgp_is_soo_route(dest, pi, &ip))
+		return true;
+	else
+		return false;
+}
+
+static char *print_bitfield(const bitfield_t *bf, char *out)
+{
+	if (!bf || !out)
+		return NULL;
+
+	unsigned int bit = 0;
+	int offset = 0;
+
+	bf_for_each_set_bit((*bf), bit, BGP_PEER_INIT_BITMAP_SIZE)
+	{
+		if (bit != 0)
+			offset += sprintf(out + offset, "%u ", bit);
+	}
+
+	if (offset == 0)
+		sprintf(out, "(empty)");
+
+	return out;
+}
+
+char *inaddr_afi_to_str(const struct in_addr *id, char *buf, int size, afi_t afi)
+{
+	memset(buf, 0, size);
+	if (afi == AFI_IP) {
+		inet_ntop(AF_INET, id, buf, size);
+	} else if (afi == AFI_IP6) {
+		struct in6_addr v6addr;
+		ipv4_to_ipv4_mapped_ipv6(&v6addr, *id);
+		inet_ntop(AF_INET6, &v6addr, buf, size);
+	}
+
+	return buf;
+}
+
+static char *ipaddr_afi_to_str(const struct in_addr *id, char *buf, int size, afi_t afi)
+{
+	memset(buf, 0, size);
+	if (afi == AFI_IP) {
+		inet_ntop(AF_INET, id, buf, size);
+	} else if (afi == AFI_IP6) {
+		struct in6_addr v6addr;
+		char addrbuf[BUFSIZ];
+		struct prefix p = { 0 };
+
+		ipv4_to_ipv4_mapped_ipv6(&v6addr, *id);
+		inet_ntop(AF_INET6, &v6addr, addrbuf, BUFSIZ);
+		in6addr2hostprefix(&v6addr, &p);
+		prefix2str(&p, buf, size);
+	}
+
+	return buf;
+}
+
+bool is_nhg_per_origin_configured(struct bgp *bgp)
+{
+	afi_t afi;
+	safi_t safi;
+	bool nhg_per_origin = false;
+	FOREACH_AFI_SAFI (afi, safi) {
+		if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_NHG_PER_ORIGIN)) {
+			nhg_per_origin = true;
+			break;
+		}
+	}
+
+	return nhg_per_origin;
+}
+
+bool is_adv_origin_configured(struct bgp *bgp)
+{
+	afi_t afi;
+	safi_t safi;
+	bool adv_origin = false;
+	FOREACH_AFI_SAFI (afi, safi) {
+		if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_ADVERTISE_ORIGIN)) {
+			adv_origin = true;
+			break;
+		}
+	}
+
+	return adv_origin;
+}
+
+bool is_path_using_soo_nhg(const struct prefix *p, struct bgp_path_info *path, uint32_t *soo_nhg,
+			   struct in_addr *soo)
+{
+	bool using_soo_nhg = false;
+	struct bgp_dest *dest = path->net;
+	struct bgp_table *table = NULL;
+	afi_t afi;
+	safi_t safi;
+
+	if (!dest)
+		return false;
+
+	table = bgp_dest_table(dest);
+	if (!table)
+		return false;
+
+	if (table->afi == AFI_L2VPN && table->safi == SAFI_EVPN)
+		return false;
+
+	afi = table->afi;
+	safi = table->safi;
+
+	if (is_nhg_per_origin_configured(path->peer->bgp) && route_has_soo_attr(path)) {
+		struct in_addr in;
+		bool is_soo_route = bgp_is_soo_route(path->net, path, &in);
+		struct bgp_per_src_nhg_hash_entry *nhe = NULL;
+		struct ipaddr ip;
+
+		memset(&ip, 0, sizeof(struct ipaddr));
+		SET_IPADDR_V4(&ip);
+		memcpy(&ip.ipaddr_v4, &in, sizeof(ip.ipaddr_v4));
+		nhe = bgp_per_src_nhg_find(path->peer->bgp, &ip, afi, safi);
+
+		if (nhe) {
+			if (is_soo_route) {
+				if (bf_test_index(nhe->bgp_soo_route_installed_pi_bitmap,
+						  path->peer->bit_index)) {
+					using_soo_nhg = true;
+					*soo_nhg = nhe->nhg_id;
+					memcpy(soo, &in, sizeof(struct in_addr));
+				}
+			} else {
+				struct bgp_dest_soo_hash_entry *dest_he;
+				dest_he = bgp_dest_soo_find(nhe, p);
+				if (dest_he && CHECK_FLAG(dest_he->flags, DEST_USING_SOO_NHGID)) {
+					using_soo_nhg = true;
+					*soo_nhg = nhe->nhg_id;
+					memcpy(soo, &in, sizeof(struct in_addr));
+				}
+			}
+		}
+	}
+
+	return using_soo_nhg;
+}
