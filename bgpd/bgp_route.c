@@ -537,6 +537,16 @@ void bgp_path_info_add_with_caller(const char *name, struct bgp_dest *dest,
 struct bgp_dest *bgp_path_info_reap(struct bgp_dest *dest,
 				    struct bgp_path_info *pi)
 {
+	bool is_evpn = false;
+	struct bgp_table *table = NULL;
+
+	table = bgp_dest_table(dest);
+	if (!table)
+		return NULL;
+
+	if (table->afi == AFI_L2VPN && table->safi == SAFI_EVPN)
+		is_evpn = true;
+
 	if (pi->next)
 		pi->next->prev = pi->prev;
 	if (pi->prev)
@@ -547,6 +557,11 @@ struct bgp_dest *bgp_path_info_reap(struct bgp_dest *dest,
 	pi->next = NULL;
 	pi->prev = NULL;
 
+	if (CHECK_FLAG(table->bgp->per_src_nhg_flags[table->afi][table->safi],
+		       BGP_FLAG_NHG_PER_ORIGIN) &&
+	    !is_evpn)
+		bgp_process_route_soo_attr(table->bgp, table->afi, table->safi, dest, pi, false);
+
 	hook_call(bgp_snmp_update_stats, dest, pi, false);
 
 	bgp_path_info_unlock(pi);
@@ -556,8 +571,23 @@ struct bgp_dest *bgp_path_info_reap(struct bgp_dest *dest,
 static struct bgp_dest *bgp_path_info_reap_unsorted(struct bgp_dest *dest,
 						    struct bgp_path_info *pi)
 {
+	bool is_evpn = false;
+	struct bgp_table *table = NULL;
+
+	table = bgp_dest_table(dest);
+	if (!table)
+		return NULL;
+
+	if (table->afi == AFI_L2VPN && table->safi == SAFI_EVPN)
+		is_evpn = true;
+
 	pi->next = NULL;
 	pi->prev = NULL;
+
+	if (CHECK_FLAG(table->bgp->per_src_nhg_flags[table->afi][table->safi],
+		       BGP_FLAG_NHG_PER_ORIGIN) &&
+	    !is_evpn)
+		bgp_process_route_soo_attr(table->bgp, table->afi, table->safi, dest, pi, false);
 
 	hook_call(bgp_snmp_update_stats, dest, pi, false);
 	bgp_path_info_unlock(pi);
@@ -567,6 +597,22 @@ static struct bgp_dest *bgp_path_info_reap_unsorted(struct bgp_dest *dest,
 
 void bgp_path_info_delete(struct bgp_dest *dest, struct bgp_path_info *pi)
 {
+	bool is_evpn = false;
+	struct bgp_table *table = NULL;
+
+	table = bgp_dest_table(dest);
+
+	if (!table)
+		return;
+
+	if (table->afi == AFI_L2VPN && table->safi == SAFI_EVPN)
+		is_evpn = true;
+
+	if (CHECK_FLAG(table->bgp->per_src_nhg_flags[table->afi][table->safi],
+		       BGP_FLAG_NHG_PER_ORIGIN) &&
+	    !is_evpn)
+		bgp_process_route_soo_attr(table->bgp, table->afi, table->safi, dest, pi, false);
+
 	bgp_path_info_set_flag(dest, pi, BGP_PATH_REMOVED);
 	/* set of previous already took care of pcount */
 	UNSET_FLAG(pi->flags, BGP_PATH_VALID);
@@ -3971,8 +4017,10 @@ void bgp_process_main_one(struct bgp *bgp, struct bgp_dest *dest, afi_t afi, saf
 	UNSET_FLAG(dest->flags, BGP_NODE_PROCESS_SCHEDULED);
 
 	/* Reap old select bgp_path_info, if it has been removed */
-	if (old_select && CHECK_FLAG(old_select->flags, BGP_PATH_REMOVED))
+	if (old_select && CHECK_FLAG(old_select->flags, BGP_PATH_REMOVED)) {
 		bgp_path_info_reap(dest, old_select);
+		bgp_per_src_nhg_upd_msg_check(bgp, afi, safi, dest);
+	}
 
 	return;
 }

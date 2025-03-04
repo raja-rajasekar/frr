@@ -68,6 +68,7 @@ extern struct in6_addr *bgp_path_info_to_ipv6_nexthop(struct bgp_path_info *path
 						      ifindex_t *ifindex);
 
 /* Static */
+static void bgp_per_src_nhg_del_send(struct bgp_per_src_nhg_hash_entry *nhe);
 static void bgp_per_src_nhg_timer_slot_run(void *item);
 static void bgp_per_src_nhg_move_to_zebra_nhid_cb(struct hash_bucket *bucket, void *ctx);
 static void bgp_soo_zebra_route_install(struct bgp_per_src_nhg_hash_entry *nhe,
@@ -696,6 +697,36 @@ bool is_path_using_soo_nhg(const struct prefix *p, struct bgp_path_info *path, u
 	return using_soo_nhg;
 }
 
+static void bgp_per_src_nhg_del(struct bgp_per_src_nhg_hash_entry *nhe)
+{
+	struct bgp_per_src_nhg_hash_entry *tmp_nhe;
+	struct bgp *bgp = nhe->bgp;
+	afi_t afi = nhe->afi;
+	safi_t safi = nhe->safi;
+
+	bgp_nhg_id_free(PER_SRC_NHG, nhe->nhg_id);
+	bgp_stop_soo_timer(nhe->bgp, nhe);
+
+	bgp_nhg_nexthop_cache_reset(&nhe->nhg_nexthop_cache_table);
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+		char buf[INET6_ADDRSTRLEN];
+		ipaddr2str(&nhe->ip, buf, sizeof(buf));
+		zlog_debug("bgp vrf %s per src nhg %s %s del", nhe->bgp->name_pretty, buf,
+			   get_afi_safi_str(nhe->afi, nhe->safi, false));
+	}
+
+	bgp_dest_soo_finish(nhe);
+	tmp_nhe = hash_release(nhe->bgp->per_src_nhg_table[afi][safi], nhe);
+	bgp_per_src_nhe_free(tmp_nhe);
+	if (!bgp->per_src_nhg_table[afi][safi]->count &&
+	    CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_CONFIG_DEL_PENDING)) {
+		UNSET_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_CONFIG_DEL_PENDING);
+		UNSET_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_NHG_PER_ORIGIN);
+		bgp_clear(NULL, bgp, afi, safi, clear_all, BGP_CLEAR_SOFT_IN, NULL);
+	}
+}
+
 /* Install 'Route with SOO' to Zebra */
 static void bgp_rt_with_soo_zebra_route_install(struct bgp_dest_soo_hash_entry *bgp_dest_soo_entry,
 						struct bgp_per_src_nhg_hash_entry *nhe)
@@ -770,6 +801,33 @@ static void bgp_per_src_nhg_add_send(struct bgp_per_src_nhg_hash_entry *nhe)
 	SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID);
 	UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING);
 	frrtrace(1, frr_bgp, per_src_nhg_add_send, nhe);
+	assert(bf_is_inited(nhe->bgp_soo_route_selected_pi_bitmap));
+	if (bf_is_inited(nhe->bgp_soo_route_installed_pi_bitmap))
+		bf_free(nhe->bgp_soo_route_installed_pi_bitmap);
+	nhe->bgp_soo_route_installed_pi_bitmap = bf_copy(nhe->bgp_soo_route_selected_pi_bitmap);
+}
+
+/* Send ZEBRA_NHG_DEL to Zebra */
+static void bgp_per_src_nhg_del_send(struct bgp_per_src_nhg_hash_entry *nhe)
+{
+	struct zapi_nhg api_nhg = {};
+
+	api_nhg.id = nhe->nhg_id;
+	char buf[INET6_ADDRSTRLEN];
+
+	/* Skip installation of L3-NHG if host routes used */
+	if (!api_nhg.id)
+		return;
+
+	ipaddr2str(&nhe->ip, buf, sizeof(buf));
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("bgp vrf %s per src nhg %s %s id %d del to zebra", nhe->bgp->name_pretty,
+			   buf, get_afi_safi_str(nhe->afi, nhe->safi, false), nhe->nhg_id);
+
+	zclient_nhg_send(zclient, ZEBRA_NHG_DEL, &api_nhg);
+	UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID);
+	UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING);
+	frrtrace(1, frr_bgp, per_src_nhg_del_send, nhe);
 	assert(bf_is_inited(nhe->bgp_soo_route_selected_pi_bitmap));
 	if (bf_is_inited(nhe->bgp_soo_route_installed_pi_bitmap))
 		bf_free(nhe->bgp_soo_route_installed_pi_bitmap);
@@ -1007,6 +1065,48 @@ static void bgp_per_src_nhg_nc_add(afi_t afi, struct bgp_per_src_nhg_hash_entry 
 			   nhe->bgp->name_pretty, pi->peer);
 }
 
+/* Delete from SOO NHG nexthop cache */
+static void bgp_per_src_nhg_nc_del(afi_t afi, struct bgp_per_src_nhg_hash_entry *nhe,
+				   struct bgp_path_info *pi)
+{
+	ifindex_t ifindex = 0;
+	struct prefix p = { 0 };
+	struct bgp_nhg_nexthop_cache *bnc;
+
+	if (!pi->attr) {
+		zlog_err("pi attr is NULL for bgp(%s) peer %p afi:%d del bnc",
+			 nhe->bgp->name_pretty, pi->peer, afi);
+		return;
+	}
+
+	/* Validation for the ipv4 mapped ipv6 nexthop. */
+	if (IS_MAPPED_IPV6(&pi->attr->mp_nexthop_global)) {
+		afi = AFI_IP;
+	} else {
+		afi = BGP_ATTR_MP_NEXTHOP_LEN_IP6(pi->attr) ? AFI_IP6 : AFI_IP;
+	}
+
+	if (make_prefix(afi, pi, &p) < 0)
+		return;
+
+	if (afi == AFI_IP6 && IN6_IS_ADDR_LINKLOCAL(&p.u.prefix6))
+		ifindex = pi->peer->connection->su.sin6.sin6_scope_id;
+
+	bnc = bnc_nhg_find(&nhe->nhg_nexthop_cache_table, &p, ifindex);
+	if (!bnc) {
+		zlog_debug("pi bnc nhg %pFX(%d)(%s) peer %p not found", &p, ifindex,
+			   nhe->bgp->name_pretty, pi->peer);
+		return;
+	}
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("Unlink and free pi bnc nhg %pFX(%d)(%s) peer %p", &bnc->prefix,
+			   bnc->ifindex, nhe->bgp->name_pretty, pi->peer);
+	UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_DO_WECMP);
+	SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING);
+	bnc_nhg_free(bnc);
+}
+
 static struct bgp_dest_soo_hash_entry *bgp_dest_soo_add(struct bgp_per_src_nhg_hash_entry *nhe,
 							struct bgp_dest *dest)
 {
@@ -1033,6 +1133,46 @@ static struct bgp_dest_soo_hash_entry *bgp_dest_soo_add(struct bgp_per_src_nhg_h
 		zlog_debug("bgp vrf %s per src nhg %s %s dest soo %s add", nhe->bgp->name_pretty,
 			   buf, get_afi_safi_str(nhe->afi, nhe->safi, false), pfxprint);
 	return dest_he;
+}
+
+static void bgp_dest_soo_del(struct bgp_dest_soo_hash_entry *dest_he,
+			     struct bgp_per_src_nhg_hash_entry *nhe)
+{
+	struct bgp_dest_soo_hash_entry *tmp_he;
+
+	bgp_dest_soo_flush_entry(dest_he);
+	tmp_he = hash_release(nhe->route_with_soo_table, dest_he);
+	bgp_dest_soo_free(tmp_he);
+
+	/* check if nhe del pending and process */
+	if (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING) &&
+	    !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID) &&
+	    !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED) &&
+	    !nhe->route_with_soo_use_nhid_cnt) {
+		bgp_per_src_nhg_del_send(nhe);
+		bgp_per_src_nhg_del(nhe);
+	}
+}
+
+static void bgp_process_dest_soo_del(struct bgp_dest_soo_hash_entry *dest_he)
+{
+	struct bgp_per_src_nhg_hash_entry *nhe = dest_he->nhe;
+
+	if (CHECK_FLAG(dest_he->flags, DEST_USING_SOO_NHGID)) {
+		/* wait for route with soo to move to zebra nhid */
+		SET_FLAG(dest_he->flags, DEST_SOO_DEL_PENDING);
+		if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG)) {
+			char buf[INET6_ADDRSTRLEN];
+			char pfxprint[PREFIX2STR_BUFFER];
+			ipaddr2str(&nhe->ip, buf, sizeof(buf));
+			prefix2str(&dest_he->p, pfxprint, sizeof(pfxprint));
+			zlog_debug("bgp vrf %s per src nhg %s %s dest soo %s del pending",
+				   nhe->bgp->name_pretty, buf,
+				   get_afi_safi_str(nhe->afi, nhe->safi, false), pfxprint);
+		}
+	} else {
+		bgp_dest_soo_del(dest_he, nhe);
+	}
 }
 
 static struct bgp_per_src_nhg_hash_entry *bgp_per_src_nhg_add(struct bgp *bgp, struct ipaddr *ip,
@@ -1070,6 +1210,47 @@ static struct bgp_per_src_nhg_hash_entry *bgp_per_src_nhg_add(struct bgp *bgp, s
 	}
 
 	return nhe;
+}
+
+static void bgp_per_src_nhg_delete(struct bgp_per_src_nhg_hash_entry *nhe)
+{
+	struct bgp_dest *dest;
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("bgp vrf %s per src nhg soo %pIA %s nhg delete cnt:%d and flags %d",
+			   nhe->bgp->name_pretty, &nhe->ip,
+			   get_afi_safi_str(nhe->afi, nhe->safi, false),
+			   nhe->route_with_soo_use_nhid_cnt, nhe->flags);
+	/* Can't delete soo NHID till all routes with soo and soo route is moved
+	 * to zebra nhid
+	 */
+	if (!nhe->route_with_soo_use_nhid_cnt &&
+	    !CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_NHID_USED)) {
+		if (CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_INSTALL_PENDING))
+			bgp_per_src_nhg_del_send(nhe);
+		bgp_per_src_nhg_del(nhe);
+	} else {
+		UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_VALID);
+		SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_DEL_PENDING);
+
+		if (CHECK_FLAG(nhe->bgp->per_src_nhg_flags[nhe->afi][nhe->safi],
+			       BGP_FLAG_CONFIG_DEL_PENDING)) {
+			/* Walk all the 'routes with SoO' and move from zebra
+			 * nhid to soo nhid */
+			hash_iterate(nhe->route_with_soo_table,
+				     (void (*)(struct hash_bucket *,
+					       void *))bgp_per_src_nhg_move_to_zebra_nhid_cb,
+				     NULL);
+			/* 'SOO route' dest */
+			dest = nhe->dest;
+			if (dest && CHECK_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_INSTALL)) {
+				bgp_soo_zebra_route_install(nhe, dest);
+				UNSET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_INSTALL);
+			}
+		}
+		nhe->dest = NULL;
+	}
+	return;
 }
 
 /* Check and see if SOO NHG can be replaced with new ECMP, this happens when the

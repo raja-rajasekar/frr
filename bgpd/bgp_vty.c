@@ -986,15 +986,6 @@ int bgp_vty_return(struct vty *vty, enum bgp_create_error_code ret)
 	return CMD_SUCCESS;
 }
 
-/* BGP clear sort. */
-enum clear_sort {
-	clear_all,
-	clear_peer,
-	clear_group,
-	clear_external,
-	clear_as
-};
-
 static void bgp_clear_vty_error(struct vty *vty, struct peer *peer, afi_t afi,
 				safi_t safi, int error)
 {
@@ -1097,9 +1088,8 @@ static int bgp_peer_clear(struct peer *peer, afi_t afi, safi_t safi,
 
 /* `clear ip bgp' functions. */
 /* Allow this to be invoked in non-vty context also. */
-static int bgp_clear(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t safi,
-		     enum clear_sort sort, enum bgp_clear_type stype,
-		     const char *arg)
+int bgp_clear(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t safi, enum clear_sort sort,
+	      enum bgp_clear_type stype, const char *arg)
 {
 	int ret = 0;
 	bool found = false;
