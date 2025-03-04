@@ -74,6 +74,11 @@ static void bgp_per_src_nhg_move_to_zebra_nhid_cb(struct hash_bucket *bucket, vo
 static void bgp_soo_zebra_route_install(struct bgp_per_src_nhg_hash_entry *nhe,
 					struct bgp_dest *dest);
 
+struct bgp_peer_clear_route_ctx {
+	struct peer *peer;
+	struct bgp_table *table;
+};
+
 /* SOO timer wheel APIs */
 static unsigned int bgp_per_src_nhg_slot_key(const void *item)
 {
@@ -1798,5 +1803,52 @@ void bgp_process_mpath_route_soo_attr(struct bgp *bgp, afi_t afi, safi_t safi, s
 {
 	for (; mpinfo; mpinfo = bgp_path_info_mpath_next(mpinfo)) {
 		bgp_process_route_soo_attr(bgp, afi, safi, dest, mpinfo, is_add);
+	}
+}
+
+static void bgp_per_src_nhg_peer_clear_route_cb(struct hash_bucket *bucket, void *ctx)
+{
+	struct bgp_path_info *pi;
+	struct bgp_per_src_nhg_hash_entry *nhe = (struct bgp_per_src_nhg_hash_entry *)bucket->data;
+	struct bgp_peer_clear_route_ctx *clear_ctx = (struct bgp_peer_clear_route_ctx *)ctx;
+	struct peer *peer = clear_ctx->peer;
+	struct bgp_table *table = clear_ctx->table;
+
+	if (nhe && nhe->dest) {
+		struct bgp_dest *dest = nhe->dest;
+		for (pi = bgp_dest_get_bgp_path_info(dest); pi; pi = pi->next) {
+			if ((pi->peer == peer) &&
+			    (pi->type == ZEBRA_ROUTE_BGP && pi->sub_type == BGP_ROUTE_NORMAL)) {
+				SET_FLAG(nhe->flags, PER_SRC_NEXTHOP_GROUP_SOO_ROUTE_CLEAR_ONLY);
+				if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+					zlog_debug("bgp vrf %s per src nhg: peer clear processing soo route %pBD for peer %p",
+						   peer->bgp->name_pretty, pi, peer);
+				bgp_process(peer->bgp, dest, pi, table->afi, table->safi);
+			}
+		}
+		frrtrace(2, frr_bgp, per_src_nhg_peer_clear_route, peer, nhe);
+	}
+}
+
+void bgp_peer_clear_soo_routes(struct peer *peer, afi_t afi, safi_t safi, struct bgp_table *table)
+{
+	if (table && ((table->afi == AFI_L2VPN && table->safi == SAFI_EVPN) || !(peer->bgp) ||
+		      !CHECK_FLAG(peer->bgp->per_src_nhg_flags[table->afi][table->safi],
+				  BGP_FLAG_NHG_PER_ORIGIN)))
+		return;
+
+	if (BGP_DEBUG(per_src_nhg, PER_SRC_NHG))
+		zlog_debug("bgp vrf %s per src nhg peer clear peer:%p", peer->bgp->name_pretty,
+			   peer);
+
+	if (peer->bgp->per_src_nhg_table[afi][safi]) {
+		struct bgp_peer_clear_route_ctx ctx = {
+			.peer = peer,
+			.table = table,
+		};
+		hash_iterate(peer->bgp->per_src_nhg_table[afi][safi],
+			     (void (*)(struct hash_bucket *,
+				       void *))bgp_per_src_nhg_peer_clear_route_cb,
+			     &ctx);
 	}
 }

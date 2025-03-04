@@ -134,6 +134,7 @@ void bgp_process_mpath_route_soo_attr(struct bgp *bgp, afi_t afi, safi_t safi, s
 				      struct bgp_path_info *new_best, bool is_add);
 
 void bgp_per_src_nhg_upd_msg_check(struct bgp *bgp, afi_t afi, safi_t safi, struct bgp_dest *dest);
+void bgp_peer_clear_soo_routes(struct peer *peer, afi_t afi, safi_t safi, struct bgp_table *table);
 /* Utils */
 bool bgp_check_is_soo_route(struct bgp *bgp, struct bgp_dest *dest, struct bgp_path_info *pi);
 bool is_path_using_soo_nhg(const struct prefix *p, struct bgp_path_info *path, uint32_t *soo_nhg,
