@@ -3939,6 +3939,96 @@ DEFUN(no_bgp_llgr_stalepath_time, no_bgp_llgr_stalepath_time_cmd,
 	return CMD_SUCCESS;
 }
 
+DEFPY(bgp_advertise_origin, bgp_advertise_origin_cmd, "[no$no] bgp advertise-origin",
+      NO_STR BGP_STR "Attach route origin ext community\n")
+{
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+	afi_t afi = bgp_node_afi(vty);
+	safi_t safi = bgp_node_safi(vty);
+	struct peer *tmp_peer;
+	struct listnode *node, *nnode;
+	struct prefix p;
+	char prefix_str[PREFIX2STR_BUFFER];
+
+	if (safi != SAFI_UNICAST)
+		return CMD_SUCCESS;
+
+	if (no) {
+		if (!CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_ADVERTISE_ORIGIN))
+			return CMD_SUCCESS;
+		UNSET_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_ADVERTISE_ORIGIN);
+	} else {
+		SET_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_ADVERTISE_ORIGIN);
+	}
+
+	bool negate = (no == NULL) ? false : true;
+
+	/* Originate IPv6 mapped IPv4 SoO route based on bgp router-id */
+	if (afi == AFI_IP6 && safi == SAFI_UNICAST) {
+		struct in6_addr v6addr;
+		ipv4_to_ipv4_mapped_ipv6(&v6addr, bgp->router_id);
+		in6addr2hostprefix(&v6addr, &p);
+		prefix2str(&p, prefix_str, sizeof(prefix_str));
+		bgp_static_set(vty, bgp, negate, prefix_str, NULL, NULL, afi, safi, NULL, 0,
+			       BGP_INVALID_LABEL_INDEX, 0, NULL, NULL, NULL, NULL, true, false);
+	} else if (afi == AFI_IP && safi == SAFI_UNICAST) {
+		/* Originate IPv4 SoO route based on bgp router-id */
+		char addr_buf[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET, &bgp->router_id, addr_buf, INET_ADDRSTRLEN);
+		bgp_static_set(vty, bgp, negate, addr_buf, NULL, NULL, afi, safi, NULL, 0,
+			       BGP_INVALID_LABEL_INDEX, 0, NULL, NULL, NULL, NULL, true, false);
+	}
+
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, tmp_peer))
+		bgp_announce_route(tmp_peer, afi, safi, true);
+
+	return CMD_SUCCESS;
+}
+
+DEFPY(bgp_nhg_per_origin, bgp_nhg_per_origin_cmd, "[no$no] bgp nhg-per-origin",
+      NO_STR BGP_STR "Process SOO for per source nexthop group\n")
+{
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+	afi_t afi = bgp_node_afi(vty);
+	safi_t safi = bgp_node_safi(vty);
+
+	if (safi != SAFI_UNICAST)
+		return CMD_SUCCESS;
+
+	if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_CONFIG_DEL_PENDING))
+		return CMD_WARNING;
+
+	if (no) {
+		if (!is_nhg_per_origin_configured(bgp))
+			return CMD_SUCCESS;
+		else if (bgp->per_src_nhg_convergence_timer !=
+			 BGP_PER_SRC_NHG_SOO_TIMER_WHEEL_PERIOD) {
+			vty_out(vty,
+				"%%  Disable 'bgp per-source-nhg convergence-timer' cli first\n");
+			return CMD_WARNING;
+		}
+
+		if (!bgp->per_src_nhg_table[afi][safi]->count) {
+			UNSET_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_NHG_PER_ORIGIN);
+			bgp_clear_vty(vty, bgp->name, afi, safi, clear_all, BGP_CLEAR_SOFT_IN, NULL);
+		} else {
+			SET_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_CONFIG_DEL_PENDING);
+			bgp_per_src_nhg_finish(bgp, afi, safi);
+		}
+	} else {
+		if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_NHG_PER_ORIGIN))
+			return CMD_SUCCESS;
+
+		/* timer wheel created only once */
+		bgp_per_src_nhg_soo_timer_wheel_init(bgp);
+
+		bgp_per_src_nhg_init(bgp, afi, safi);
+		SET_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_NHG_PER_ORIGIN);
+		bgp_clear_vty(vty, bgp->name, afi, safi, clear_all, BGP_CLEAR_SOFT_IN, NULL);
+	}
+	return CMD_SUCCESS;
+}
+
 void bgp_initiate_graceful_shut_unshut(struct vty *vty, struct bgp *bgp)
 {
 	bgp_static_redo_import_check(bgp);
@@ -19224,6 +19314,13 @@ static void bgp_config_write_family(struct vty *vty, struct bgp *bgp, afi_t afi,
 
 	bgp_config_write_redistribute(vty, bgp, afi, safi);
 
+	if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_ADVERTISE_ORIGIN))
+		vty_out(vty, "  bgp advertise-origin\n");
+
+	if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_NHG_PER_ORIGIN))
+		vty_out(vty, "  bgp nhg-per-origin\n");
+
+
 	/* BGP flag dampening. */
 	if (CHECK_FLAG(bgp->af_flags[afi][safi], BGP_CONFIG_DAMPENING))
 		bgp_config_write_damp(vty, afi, safi);
@@ -21657,6 +21754,14 @@ void bgp_vty_init(void)
 	install_element(BGP_VPNV6_NODE, &no_neighbor_soo_cmd);
 	install_element(BGP_EVPN_NODE, &neighbor_soo_cmd);
 	install_element(BGP_EVPN_NODE, &no_neighbor_soo_cmd);
+
+	/* Auto generate SOO for nexthop-group*/
+	install_element(BGP_IPV4_NODE, &bgp_advertise_origin_cmd);
+	install_element(BGP_IPV6_NODE, &bgp_advertise_origin_cmd);
+
+	/* Process SOO for nexthop-group*/
+	install_element(BGP_IPV4_NODE, &bgp_nhg_per_origin_cmd);
+	install_element(BGP_IPV6_NODE, &bgp_nhg_per_origin_cmd);
 
 	/* address-family commands. */
 	install_element(BGP_NODE, &address_family_ipv4_safi_cmd);

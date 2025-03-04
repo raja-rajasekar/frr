@@ -3963,6 +3963,21 @@ When default route is not present in R2'2 BGP table, 10.139.224.0/20 and 192.0.2
    Total number of prefixes 3
    Router2#
 
+.. _bgp-convergence:
+
+Convergence
+-----------
+.. clicmd:: bgp advertise-origin
+
+   This command attaches a Site of Origin (SOO) attribute to all routes advertised
+   within the specified address-family. The SOO value is automatically derived from
+   the BGP router ID.
+
+.. clicmd:: bgp nhg-per-origin
+
+   This command processes the Site of Origin (SOO) attribute, facilitating the creation
+   of nexthop groups based on the value of SOO.
+
 .. _bgp-debugging:
 
 Debugging

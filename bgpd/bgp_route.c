@@ -76,6 +76,7 @@
 #include "bgpd/bgp_flowspec.h"
 #include "bgpd/bgp_flowspec_util.h"
 #include "bgpd/bgp_pbr.h"
+#include "bgpd/bgp_per_src_nhg.h"
 
 #include "bgpd/bgp_route_clippy.c"
 
@@ -2142,6 +2143,30 @@ void bgp_attr_add_gshut_community(struct attr *attr)
 	attr->local_pref = BGP_GSHUT_LOCAL_PREF;
 }
 
+void bgp_attr_add_soo_community(struct ecommunity *soo, struct attr *attr)
+{
+	struct ecommunity *old;
+	struct ecommunity *new;
+	struct ecommunity *merge;
+
+	old = bgp_attr_get_ecommunity(attr);
+
+	assert(soo);
+
+	if (old) {
+		merge = ecommunity_merge(ecommunity_dup(old), soo);
+
+		if (old->refcnt == 0)
+			ecommunity_free(&old);
+
+		new = ecommunity_uniq_sort(merge);
+		ecommunity_free(&merge);
+	} else {
+		new = ecommunity_dup(soo);
+	}
+
+	bgp_attr_set_ecommunity(attr, new);
+}
 
 /* Notify BGP Conditional advertisement scanner process. */
 void bgp_notify_conditional_adv_scanner(struct update_subgroup *subgrp)
@@ -2867,6 +2892,9 @@ bool subgroup_announce_check(struct bgp_dest *dest, struct bgp_path_info *pi,
 							bgp_attr_get_ecommunity(
 								attr)));
 	}
+
+	if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi], BGP_FLAG_ADVERTISE_ORIGIN))
+		bgp_attr_add_soo_community(bgp->per_source_nhg_soo, attr);
 
 	/*
 	 * When the next hop is set to ourselves, if all multipaths have
@@ -7298,16 +7326,14 @@ int bgp_nlri_parse_ip(struct peer *peer, struct attr *attr,
 	return BGP_NLRI_PARSE_OK;
 }
 
-static void bgp_nexthop_reachability_check(afi_t afi, safi_t safi,
-					   struct bgp_path_info *bpi,
-					   const struct prefix *p,
-					   struct bgp_dest *dest,
-					   struct bgp *bgp,
-					   struct bgp *bgp_nexthop)
+static void bgp_nexthop_reachability_check(afi_t afi, safi_t safi, struct bgp_path_info *bpi,
+					   const struct prefix *p, struct bgp_dest *dest,
+					   struct bgp *bgp, struct bgp *bgp_nexthop,
+					   bool skip_import_check)
 {
 	/* Nexthop reachability check. */
 	if (safi == SAFI_UNICAST || safi == SAFI_LABELED_UNICAST) {
-		if (CHECK_FLAG(bgp->flags, BGP_FLAG_IMPORT_CHECK)) {
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_IMPORT_CHECK) && (skip_import_check == false)) {
 			if (bgp_find_or_add_nexthop(bgp, bgp_nexthop, afi, safi,
 						    bpi, NULL, 0, p))
 				bgp_path_info_set_flag(dest, bpi,
@@ -7352,8 +7378,8 @@ static void bgp_static_free(struct bgp_static *bgp_static)
 	XFREE(MTYPE_BGP_STATIC, bgp_static);
 }
 
-void bgp_static_update(struct bgp *bgp, const struct prefix *p,
-		       struct bgp_static *bgp_static, afi_t afi, safi_t safi)
+void bgp_static_update(struct bgp *bgp, const struct prefix *p, struct bgp_static *bgp_static,
+		       afi_t afi, safi_t safi, bool skip_import_check)
 {
 	struct bgp_dest *dest;
 	struct bgp_path_info *pi;
@@ -7522,8 +7548,8 @@ void bgp_static_update(struct bgp *bgp, const struct prefix *p,
 			if (pi->extra && pi->extra->vrfleak && pi->extra->vrfleak->bgp_orig)
 				bgp_nexthop = pi->extra->vrfleak->bgp_orig;
 
-			bgp_nexthop_reachability_check(afi, safi, pi, p, dest,
-						       bgp, bgp_nexthop);
+			bgp_nexthop_reachability_check(afi, safi, pi, p, dest, bgp, bgp_nexthop,
+						       skip_import_check);
 
 			/* Process change. */
 			bgp_aggregate_increment(bgp, p, pi, afi, safi);
@@ -7573,7 +7599,7 @@ void bgp_static_update(struct bgp *bgp, const struct prefix *p,
 #endif
 	}
 
-	bgp_nexthop_reachability_check(afi, safi, new, p, dest, bgp, bgp);
+	bgp_nexthop_reachability_check(afi, safi, new, p, dest, bgp, bgp, skip_import_check);
 
 	/* Aggregate address increment. */
 	bgp_aggregate_increment(bgp, p, new, afi, safi);
@@ -7652,15 +7678,14 @@ void bgp_static_withdraw(struct bgp *bgp, const struct prefix *p, afi_t afi,
 
 /* Configure static BGP network.  When user don't run zebra, static
    route should be installed as valid.  */
-int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
-		   const char *rd_str, const char *label_str, afi_t afi,
-		   safi_t safi, const char *rmap, int backdoor,
-		   uint32_t label_index, int evpn_type, const char *esi,
-		   const char *gwip, const char *ethtag, const char *routermac)
+int bgp_static_set(struct vty *vty, struct bgp *bgp, bool negate, const char *ip_str,
+		   const char *rd_str, const char *label_str, afi_t afi, safi_t safi,
+		   const char *rmap, int backdoor, uint32_t label_index, int evpn_type,
+		   const char *esi, const char *gwip, const char *ethtag, const char *routermac,
+		   bool skip_import_check, bool user_configured)
 {
-	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int ret;
-	struct prefix p;
+	struct prefix p = { 0 };
 	struct bgp_static *bgp_static;
 	struct prefix_rd prd = {};
 	struct bgp_dest *pdest;
@@ -7673,12 +7698,22 @@ int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
 	/* Convert IP prefix string to struct prefix. */
 	ret = str2prefix(ip_str, &p);
 	if (!ret) {
-		vty_out(vty, "%% Malformed prefix\n");
-		return CMD_WARNING_CONFIG_FAILED;
+		if (vty) {
+			vty_out(vty, "%% Malformed prefix\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		} else {
+			zlog_err("%% Malformed prefix");
+			return -1;
+		}
 	}
 	if (afi == AFI_IP6 && IN6_IS_ADDR_LINKLOCAL(&p.u.prefix6)) {
-		vty_out(vty, "%% Malformed prefix (link-local address)\n");
-		return CMD_WARNING_CONFIG_FAILED;
+		if (vty) {
+			vty_out(vty, "%% Malformed prefix (link-local address)\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		} else {
+			zlog_err("%% Malformed prefix (link-local address)");
+			return -1;
+		}
 	}
 
 	apply_mask(&p);
@@ -7686,15 +7721,25 @@ int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
 	if (afi == AFI_L2VPN &&
 	    (bgp_build_evpn_prefix(evpn_type, ethtag != NULL ? atol(ethtag) : 0,
 				   &p))) {
-		vty_out(vty, "%% L2VPN prefix could not be forged\n");
-		return CMD_WARNING_CONFIG_FAILED;
+		if (vty) {
+			vty_out(vty, "%% L2VPN prefix could not be forged\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		} else {
+			zlog_err("L2VPN prefix could not be forged");
+			return -1;
+		}
 	}
 
 	if (safi == SAFI_MPLS_VPN || safi == SAFI_EVPN) {
 		ret = str2prefix_rd(rd_str, &prd);
 		if (!ret) {
-			vty_out(vty, "%% Malformed rd\n");
-			return CMD_WARNING_CONFIG_FAILED;
+			if (vty) {
+				vty_out(vty, "%% Malformed rd\n");
+				return CMD_WARNING_CONFIG_FAILED;
+			} else {
+				zlog_err("Malformed rd");
+				return -1;
+			}
 		}
 
 		if (label_str) {
@@ -7707,28 +7752,47 @@ int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
 
 	if (safi == SAFI_EVPN) {
 		if (esi && str2esi(esi, NULL) == 0) {
-			vty_out(vty, "%% Malformed ESI\n");
-			return CMD_WARNING_CONFIG_FAILED;
+			if (vty) {
+				vty_out(vty, "%% Malformed ESI\n");
+				return CMD_WARNING_CONFIG_FAILED;
+			} else {
+				zlog_err("Malformed ESI");
+				return -1;
+			}
 		}
 		if (routermac && prefix_str2mac(routermac, NULL) == 0) {
-			vty_out(vty, "%% Malformed Router MAC\n");
-			return CMD_WARNING_CONFIG_FAILED;
+			if (vty) {
+				vty_out(vty, "%% Malformed Router MAC\n");
+				return CMD_WARNING_CONFIG_FAILED;
+			} else {
+				zlog_err("Malformed Router MAC");
+				return -1;
+			}
 		}
 		if (gwip) {
 			memset(&gw_ip, 0, sizeof(gw_ip));
 			ret = str2prefix(gwip, &gw_ip);
 			if (!ret) {
-				vty_out(vty, "%% Malformed GatewayIp\n");
-				return CMD_WARNING_CONFIG_FAILED;
+				if (vty) {
+					vty_out(vty, "%% Malformed GatewayIp\n");
+					return CMD_WARNING_CONFIG_FAILED;
+				} else {
+					zlog_err("Malformed GatewayIp");
+					return -1;
+				}
 			}
 			if ((gw_ip.family == AF_INET &&
 			     is_evpn_prefix_ipaddr_v6((struct prefix_evpn *)&p)) ||
 			    (gw_ip.family == AF_INET6 &&
 			     is_evpn_prefix_ipaddr_v4(
 				     (struct prefix_evpn *)&p))) {
-				vty_out(vty,
-					"%% GatewayIp family differs with IP prefix\n");
-				return CMD_WARNING_CONFIG_FAILED;
+				if (vty) {
+					vty_out(vty, "%% GatewayIp family differs with IP prefix\n");
+					return CMD_WARNING_CONFIG_FAILED;
+				} else {
+					zlog_err("GatewayIp family differs with IP prefix");
+					return -1;
+				}
 			}
 		}
 	}
@@ -7750,26 +7814,42 @@ int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
 		dest = bgp_node_lookup(bgp->route[afi][safi], &p);
 
 		if (!dest) {
-			vty_out(vty, "%% Can't find static route specified\n");
-			return CMD_WARNING_CONFIG_FAILED;
+			if (vty) {
+				vty_out(vty, "%% Can't find static route specified\n");
+				return CMD_WARNING_CONFIG_FAILED;
+			} else {
+				zlog_err("%% Can't find static route specified");
+				return -1;
+			}
 		}
 
 		bgp_static = bgp_dest_get_bgp_static_info(dest);
 		if (bgp_static) {
 			if ((label_index != BGP_INVALID_LABEL_INDEX) &&
 			    (label_index != bgp_static->label_index)) {
-				vty_out(vty,
-					"%% label-index doesn't match static route\n");
+				if (vty)
+					vty_out(vty, "%% label-index doesn't match static route\n");
+				else
+					zlog_err("%% label-index doesn't match static route");
 				bgp_dest_unlock_node(dest);
-				return CMD_WARNING_CONFIG_FAILED;
+				if (vty)
+					return CMD_WARNING_CONFIG_FAILED;
+				else
+					return -1;
 			}
 
 			if ((rmap && bgp_static->rmap.name) &&
 			    strcmp(rmap, bgp_static->rmap.name)) {
-				vty_out(vty,
-					"%% route-map name doesn't match static route\n");
+				if (vty)
+					vty_out(vty,
+						"%% route-map name doesn't match static route\n");
+				else
+					zlog_err("%% route-map name doesn't match static route");
 				bgp_dest_unlock_node(dest);
-				return CMD_WARNING_CONFIG_FAILED;
+				if (vty)
+					return CMD_WARNING_CONFIG_FAILED;
+				else
+					return -1;
 			}
 
 			/* Update BGP RIB. */
@@ -7789,17 +7869,23 @@ int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
 
 		bgp_static = bgp_dest_get_bgp_static_info(dest);
 		if (bgp_static) {
+			bgp_static->user_configured = user_configured;
 			/* Configuration change. */
 			/* Label index cannot be changed. */
 			if (bgp_static->label_index != label_index) {
-				vty_out(vty, "%% cannot change label-index\n");
+				if (vty)
+					vty_out(vty, "%% cannot change label-index\n");
+				else
+					zlog_err("%% cannot change label-index");
 				bgp_dest_unlock_node(dest);
-				return CMD_WARNING_CONFIG_FAILED;
+				if (vty)
+					return CMD_WARNING_CONFIG_FAILED;
+				else
+					return -1;
 			}
 
 			/* Check previous routes are installed into BGP.  */
-			if (bgp_static->valid
-			    && bgp_static->backdoor != backdoor)
+			if (bgp_static->valid && bgp_static->backdoor != backdoor)
 				need_update = 1;
 
 			bgp_static->backdoor = backdoor;
@@ -7832,6 +7918,7 @@ int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
 			bgp_static->igpmetric = 0;
 			bgp_static->igpnexthop.s_addr = INADDR_ANY;
 			bgp_static->label_index = label_index;
+			bgp_static->user_configured = user_configured;
 			bgp_static->label = label;
 			bgp_static->prd = prd;
 
@@ -7879,11 +7966,12 @@ int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
 			bgp_static_withdraw(bgp, &p, afi, safi, NULL);
 
 		if (!bgp_static->backdoor)
-			bgp_static_update(bgp, &p, bgp_static, afi, safi);
+			bgp_static_update(bgp, &p, bgp_static, afi, safi, skip_import_check);
 	}
 
 	return CMD_SUCCESS;
 }
+
 
 void bgp_static_add(struct bgp *bgp)
 {
@@ -7910,15 +7998,13 @@ void bgp_static_add(struct bgp *bgp)
 					bgp_static =
 						bgp_dest_get_bgp_static_info(
 							rm);
-					bgp_static_update(bgp,
-							  bgp_dest_get_prefix(rm),
-							  bgp_static, afi, safi);
+					bgp_static_update(bgp, bgp_dest_get_prefix(rm), bgp_static,
+							  afi, safi, false);
 				}
 			} else {
-				bgp_static_update(
-					bgp, bgp_dest_get_prefix(dest),
-					bgp_dest_get_bgp_static_info(dest), afi,
-					safi);
+				bgp_static_update(bgp, bgp_dest_get_prefix(dest),
+						  bgp_dest_get_bgp_static_info(dest), afi, safi,
+						  false);
 			}
 		}
 	UNSET_FLAG(bgp->flags, BGP_FLAG_FORCE_STATIC_PROCESS);
@@ -8005,15 +8091,13 @@ void bgp_static_redo_import_check(struct bgp *bgp)
 					bgp_static =
 						bgp_dest_get_bgp_static_info(
 							rm);
-					bgp_static_update(bgp,
-							  bgp_dest_get_prefix(rm),
-							  bgp_static, afi, safi);
+					bgp_static_update(bgp, bgp_dest_get_prefix(rm), bgp_static,
+							  afi, safi, false);
 				}
 			} else {
 				bgp_static = bgp_dest_get_bgp_static_info(dest);
-				bgp_static_update(bgp,
-						  bgp_dest_get_prefix(dest),
-						  bgp_static, afi, safi);
+				bgp_static_update(bgp, bgp_dest_get_prefix(dest), bgp_static, afi,
+						  safi, false);
 			}
 		}
 	}
@@ -8160,6 +8244,8 @@ DEFPY(bgp_network,
 	"Specify a BGP backdoor route\n")
 {
 	char addr_prefix_str[BUFSIZ];
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+	bool negate = (no == NULL) ? false : true;
 
 	if (address_str) {
 		int ret;
@@ -8173,13 +8259,10 @@ DEFPY(bgp_network,
 		}
 	}
 
-	return bgp_static_set(vty, no,
-			      address_str ? addr_prefix_str : prefix_str, NULL,
-			      NULL, AFI_IP, bgp_node_safi(vty), map_name,
-			      backdoor ? 1 : 0,
-			      label_index ? (uint32_t)label_index
-					  : BGP_INVALID_LABEL_INDEX,
-			      0, NULL, NULL, NULL, NULL);
+	return bgp_static_set(vty, bgp, negate, address_str ? addr_prefix_str : prefix_str, NULL,
+			      NULL, AFI_IP, bgp_node_safi(vty), map_name, backdoor ? 1 : 0,
+			      label_index ? (uint32_t)label_index : BGP_INVALID_LABEL_INDEX, 0,
+			      NULL, NULL, NULL, NULL, false, true);
 }
 
 DEFPY(ipv6_bgp_network,
@@ -8194,11 +8277,13 @@ DEFPY(ipv6_bgp_network,
 	"Label index to associate with the prefix\n"
 	"Label index value\n")
 {
-	return bgp_static_set(vty, no, prefix_str, NULL, NULL, AFI_IP6,
-			      bgp_node_safi(vty), map_name, 0,
-			      label_index ? (uint32_t)label_index
-					  : BGP_INVALID_LABEL_INDEX,
-			      0, NULL, NULL, NULL, NULL);
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+	bool negate = (no == NULL) ? false : true;
+
+	return bgp_static_set(vty, bgp, negate, prefix_str, NULL, NULL, AFI_IP6, bgp_node_safi(vty),
+			      map_name, 0,
+			      label_index ? (uint32_t)label_index : BGP_INVALID_LABEL_INDEX, 0,
+			      NULL, NULL, NULL, NULL, false, true);
 }
 
 static struct bgp_aggregate *bgp_aggregate_new(void)
@@ -17024,7 +17109,9 @@ void bgp_config_write_network(struct vty *vty, struct bgp *bgp, afi_t afi,
 
 		p = bgp_dest_get_prefix(dest);
 
-		vty_out(vty, "  network %pFX", p);
+		if (bgp_static->user_configured) {
+			vty_out(vty, "  network %pFX", p);
+		}
 
 		if (bgp_static->label_index != BGP_INVALID_LABEL_INDEX)
 			vty_out(vty, " label-index %u",

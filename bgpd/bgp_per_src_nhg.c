@@ -1852,3 +1852,56 @@ void bgp_peer_clear_soo_routes(struct peer *peer, afi_t afi, safi_t safi, struct
 			     &ctx);
 	}
 }
+
+/* Check and send if a new 'SOO route' up on router ID change*/
+void bgp_per_src_nhg_handle_router_id_update(struct bgp *bgp, const struct in_addr *id)
+{
+	char soo[INET_ADDRSTRLEN + 6];
+	struct ecommunity *ecomm_soo;
+	char addrbuf[BUFSIZ];
+	afi_t afi;
+	safi_t safi;
+
+	if (id->s_addr != INADDR_ANY) {
+		snprintf(soo, sizeof(soo), "%s:%X", inet_ntoa(*id),
+			 SOO_LOCAL_ADMINISTRATOR_VALUE_PER_SOURCE_NHG);
+		ecomm_soo = ecommunity_str2com(soo, ECOMMUNITY_SITE_ORIGIN, 0);
+		if (bgp->per_source_nhg_soo)
+			ecommunity_free(&bgp->per_source_nhg_soo);
+		bgp->per_source_nhg_soo = ecomm_soo;
+		ecommunity_str(bgp->per_source_nhg_soo);
+
+		FOREACH_AFI_SAFI (afi, safi) {
+			if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi],
+				       BGP_FLAG_ADVERTISE_ORIGIN)) {
+				bgp_static_set(NULL, bgp, true,
+					       ipaddr_afi_to_str(&bgp->router_id, addrbuf, BUFSIZ,
+								 afi),
+					       NULL, NULL, afi, safi, NULL, 0,
+					       BGP_INVALID_LABEL_INDEX, 0, NULL, NULL, NULL, NULL,
+					       true, false);
+				bgp_static_set(NULL, bgp, false,
+					       ipaddr_afi_to_str(id, addrbuf, BUFSIZ, afi), NULL,
+					       NULL, afi, safi, NULL, 0, BGP_INVALID_LABEL_INDEX, 0,
+					       NULL, NULL, NULL, NULL, true, false);
+			}
+		}
+	} else {
+		if (bgp->per_source_nhg_soo) {
+			ecommunity_free(&bgp->per_source_nhg_soo);
+			bgp->per_source_nhg_soo = NULL;
+		}
+
+		FOREACH_AFI_SAFI (afi, safi) {
+			if (CHECK_FLAG(bgp->per_src_nhg_flags[afi][safi],
+				       BGP_FLAG_ADVERTISE_ORIGIN)) {
+				bgp_static_set(NULL, bgp, true,
+					       ipaddr_afi_to_str(&bgp->router_id, addrbuf, BUFSIZ,
+								 afi),
+					       NULL, NULL, afi, safi, NULL, 0,
+					       BGP_INVALID_LABEL_INDEX, 0, NULL, NULL, NULL, NULL,
+					       true, false);
+			}
+		}
+	}
+}

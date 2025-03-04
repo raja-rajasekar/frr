@@ -418,6 +418,7 @@ struct bgp_static {
 	esi_t *eth_s_id;
 	struct ethaddr *router_mac;
 	struct prefix gatewayIp;
+	bool user_configured;
 };
 
 /* Aggreagete address:
@@ -814,17 +815,16 @@ extern void bgp_static_add(struct bgp *);
 extern void bgp_static_delete(struct bgp *);
 extern void bgp_static_redo_import_check(struct bgp *);
 extern void bgp_purge_static_redist_routes(struct bgp *bgp);
-extern void bgp_static_update(struct bgp *bgp, const struct prefix *p,
-			      struct bgp_static *s, afi_t afi, safi_t safi);
+extern void bgp_static_update(struct bgp *bgp, const struct prefix *p, struct bgp_static *s,
+			      afi_t afi, safi_t safi, bool skip_import_check);
 extern void bgp_static_withdraw(struct bgp *bgp, const struct prefix *p,
 				afi_t afi, safi_t safi, struct prefix_rd *prd);
 
-extern int bgp_static_set(struct vty *vty, bool negate, const char *ip_str,
-			  const char *rd_str, const char *label_str, afi_t afi,
-			  safi_t safi, const char *rmap, int backdoor,
-			  uint32_t label_index, int evpn_type, const char *esi,
-			  const char *gwip, const char *ethtag,
-			  const char *routermac);
+extern int bgp_static_set(struct vty *vty, struct bgp *bgp, bool negate, const char *ip_str,
+			  const char *rd_str, const char *label_str, afi_t afi, safi_t safi,
+			  const char *rmap, int backdoor, uint32_t label_index, int evpn_type,
+			  const char *esi, const char *gwip, const char *ethtag,
+			  const char *routermac, bool skip_import_check, bool user_configured);
 
 /* this is primarily for MPLS-VPN */
 extern void bgp_update(struct peer *peer, const struct prefix *p,
@@ -930,6 +930,7 @@ extern int bgp_path_info_cmp_compatible(struct bgp *bgp,
 					enum bgp_path_selection_reason *reason);
 extern void bgp_attr_add_llgr_community(struct attr *attr);
 extern void bgp_attr_add_gshut_community(struct attr *attr);
+extern void bgp_attr_add_soo_community(struct ecommunity *soo, struct attr *attr);
 
 extern void bgp_best_selection(struct bgp *bgp, struct bgp_dest *dest,
 			       struct bgp_maxpaths_cfg *mpath_cfg,

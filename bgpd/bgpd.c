@@ -79,6 +79,7 @@
 #include "bgpd/bgp_evpn_mh.h"
 #include "bgpd/bgp_mac.h"
 #include "bgpd/bgp_trace.h"
+#include "bgpd/bgp_per_src_nhg.h"
 
 DEFINE_MTYPE_STATIC(BGPD, PEER_TX_SHUTDOWN_MSG, "Peer shutdown message (TX)");
 DEFINE_QOBJ_TYPE(bgp_master);
@@ -293,6 +294,8 @@ static int bgp_router_id_set(struct bgp *bgp, const struct in_addr *id,
 
 	if (IPV4_ADDR_SAME(&bgp->router_id, id))
 		return 0;
+
+	bgp_per_src_nhg_handle_router_id_update(bgp, id);
 
 	/* EVPN uses router id in RD, withdraw them */
 	if (is_evpn_enabled())
@@ -3981,6 +3984,14 @@ int bgp_delete(struct bgp *bgp)
 			   bgp);
 
 	bgp_vpn_leak_unimport(bgp);
+
+	if (bgp->per_source_nhg_soo) {
+		ecommunity_free(&bgp->per_source_nhg_soo);
+		bgp->per_source_nhg_soo = NULL;
+	}
+
+	bgp_per_src_nhg_soo_timer_wheel_delete(bgp);
+	bgp_per_src_nhg_stop(bgp);
 
 	hook_call(bgp_inst_delete, bgp);
 
