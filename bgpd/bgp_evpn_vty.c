@@ -1370,8 +1370,6 @@ static int bgp_show_ethernet_vpn(struct vty *vty, struct prefix_rd *prd, enum bg
 				picomm = bgp_attr_get_community(pi->attr);
 
 				total_count++;
-				prefix_path_count++;
-
 				if (type == bgp_show_type_neighbor) {
 				        struct peer *peer = output_arg;
 
@@ -1459,6 +1457,7 @@ static int bgp_show_ethernet_vpn(struct vty *vty, struct prefix_rd *prd, enum bg
 				}
 				no_display = 1;
 				add_rd_to_json = 1;
+				prefix_path_count++;
 				if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
 					multi_path_count++;
 				if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))

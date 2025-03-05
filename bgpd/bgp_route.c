@@ -12399,7 +12399,15 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 			picomm = bgp_attr_get_community(pi->attr);
 
 			total_count++;
-			prefix_path_count++;
+
+			if (type == bgp_show_type_neighbor || type == bgp_show_type_flap_neighbor ||
+			    type == bgp_show_type_damp_neighbor) {
+				union sockunion *su = output_arg;
+
+				if (pi->peer == NULL || pi->peer->su_remote == NULL ||
+				    !sockunion_same(pi->peer->su_remote, su))
+					continue;
+			}
 
 			if (!brief) {
 				if (type == bgp_show_type_prefix_version) {
@@ -12674,6 +12682,7 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 				}
 			}
 			display++;
+			prefix_path_count++;
 			if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
 				multi_path_count++;
 			if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
