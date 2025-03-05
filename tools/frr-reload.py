@@ -1232,9 +1232,30 @@ def pim_delete_move_lines(lines_to_add, lines_to_del):
     return (lines_to_add, lines_to_del)
 
 
+def ipv6_nd_ra_delete_move_lines(lines_to_add, lines_to_del):
+
+    # Under interface context, if 'no ip nd ra-interval' is present
+    # then append it to the end, to meet the condtion of ra-lifetime
+    # greater than ra-interval.
+
+    for ctx_keys, line in lines_to_del:
+        if (
+            ctx_keys[0].startswith("interface")
+            and line
+            and line.startswith("ipv6 nd ra-interval ")
+        ):
+            lines_to_del.remove((ctx_keys, line))
+            lines_to_del.append((ctx_keys, line))
+
+    return (lines_to_add, lines_to_del)
+
+
 def delete_move_lines(lines_to_add, lines_to_del):
     lines_to_add, lines_to_del = bgp_delete_move_lines(lines_to_add, lines_to_del)
     lines_to_add, lines_to_del = pim_delete_move_lines(lines_to_add, lines_to_del)
+    lines_to_add, lines_to_del = ipv6_nd_ra_delete_move_lines(
+        lines_to_add, lines_to_del
+    )
 
     return (lines_to_add, lines_to_del)
 
