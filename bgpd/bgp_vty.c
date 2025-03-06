@@ -128,10 +128,14 @@ FRR_CFG_DEFAULT_BOOL(BGP_SOFT_VERSION_CAPABILITY,
 	{ .val_bool = true, .match_profile = "datacenter", },
 	{ .val_bool = false },
 );
+
 FRR_CFG_DEFAULT_BOOL(BGP_DYNAMIC_CAPABILITY,
-	{ .val_bool = true, .match_profile = "datacenter", },
-	{ .val_bool = false },
-);
+		     {
+			     .val_bool = false,
+			     .match_profile = "datacenter",
+		     },
+		     { .val_bool = false }, );
+
 FRR_CFG_DEFAULT_BOOL(BGP_ENFORCE_FIRST_AS,
 	{ .val_bool = false, .match_version = "< 9.1", },
 	{ .val_bool = true },
