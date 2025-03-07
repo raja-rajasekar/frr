@@ -1039,10 +1039,11 @@ struct pim_msdp_peer *pim_msdp_peer_add(struct pim_instance *pim,
 	/* XXX: originator_id setting needs to move to the mesh group */
 	pim->msdp.originator_id = *local;
 	pim_msdp_addr2su(&mp->su_local, mp->local);
-	if (mesh_group_name)
+	if (mesh_group_name) {
 		mp->mesh_group_name =
 			XSTRDUP(MTYPE_PIM_MSDP_MG_NAME, mesh_group_name);
-
+		SET_FLAG(mp->flags, PIM_MSDP_PEERF_IN_GROUP);
+	}
 	mp->state = PIM_MSDP_INACTIVE;
 	mp->fd = -1;
 	strlcpy(mp->last_reset, "-", sizeof(mp->last_reset));
