@@ -9,7 +9,7 @@
 
 module=${0##*/}
 funcs=(frr)
-nondef_funcs=(ospftable ospf6table evpntable bgptable)
+nondef_funcs=(ospftable ospf6table evpntable bgptable bgpsootable)
 json=
 jexec=
 
@@ -183,11 +183,18 @@ func_evpntable()
     exec_cmd bgp.evpn.route.vni.all.detail vtysh -c "show bgp vni all detail"
 }
 
+func_bgpsootable()
+{
+    exec_cmd $jexec bgp.ipv4_soo_detail vtysh -c "show bgp ipv4 unicast soo route detail $json"
+    exec_cmd $jexec bgp.ipv6_soo_detail vtysh -c "show bgp ipv6 unicast soo route detail $json"
+}
+
 func_bgptable()
 {
     exec_cmd $jexec bgp.route.ipv4_vrf_all_detail vtysh -c "show bgp vrf all ipv4 unicast detail $json"
     exec_cmd $jexec bgp.route.ipv6_vrf_all_detail vtysh -c "show bgp vrf all ipv6 unicast detail $json"
 }
+
 # main
 while getopts "c:jl" Option; do
     case $Option in
