@@ -1130,7 +1130,6 @@ static void zebra_nhg_set_valid(struct nhg_hash_entry *nhe, bool valid)
 			UNSET_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED);
 	}
 
-	frrtrace(1, frr_zebra, zebra_nhg_set_valid, nhe);
 	/* Update validity of nexthops depending on it */
 	frr_each (nhg_connected_tree, &nhe->nhg_dependents, rb_node_dep) {
 		dependent_valid = valid;

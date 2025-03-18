@@ -790,8 +790,8 @@ void rib_uninstall_kernel(struct route_node *rn, struct route_entry *re)
 	hook_call(rib_update, rn, "uninstalling from kernel");
 
 	enum zebra_dplane_result result = dplane_route_delete(rn, re);
-	frrtrace(2, frr_zebra, rib_uninstall_kernel_route, srcdest_rnode2str(rn, buf, sizeof(buf)),
-		 result);
+	frrtrace(3, frr_zebra, rib_uninstall_kernel_route, srcdest_rnode2str(rn, buf, sizeof(buf)),
+		 re->nhe, result);
 	switch (result) {
 	case ZEBRA_DPLANE_REQUEST_QUEUED:
 		if (zvrf)

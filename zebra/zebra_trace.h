@@ -464,12 +464,14 @@ TRACEPOINT_EVENT(
 	TP_ARGS(
 		const struct prefix *, p,
 		int, cmd,
+		uint32_t, nhg_id,
 		const char *, nexthop),
 	TP_FIELDS(
 		ctf_string(family, (p->family == AF_INET) ? "AF_INET" : "AF_INET6")
 		ctf_array(unsigned char, pfx, p, sizeof(struct prefix))
 		ctf_integer(unsigned int, pfxlen, p->prefixlen)
 		ctf_integer(uint8_t, cmd, cmd)
+		ctf_integer(uint32_t, nhg_id, nhg_id)
 		ctf_string(nexthops, nexthop)
 		)
 	)
@@ -1323,6 +1325,21 @@ TRACEPOINT_LOGLEVEL(frr_zebra, zebra_interface_nhg_reinstall, TRACE_INFO)
 
 TRACEPOINT_EVENT(
     frr_zebra,
+    if_down_nhg_dependents,
+    TP_ARGS(
+        const struct interface *, ifp, struct nhg_hash_entry *, nhe),
+    TP_FIELDS(
+        ctf_string(ifp, ifp->name)
+        ctf_integer(unsigned int, ifindex, ifp->ifindex)
+        ctf_integer(uint32_t, nhe_id, nhe->id)
+        ctf_integer(uint32_t, nhe_flags, nhe->flags)
+        )
+   )
+
+TRACEPOINT_LOGLEVEL(frr_zebra, if_down_nhg_dependents, TRACE_INFO)
+
+TRACEPOINT_EVENT(
+    frr_zebra,
     zebra_nhg_set_valid,
     TP_ARGS(struct nhg_hash_entry *, nhe),
     TP_FIELDS(
@@ -1975,9 +1992,11 @@ TRACEPOINT_EVENT(
     frr_zebra,
     rib_uninstall_kernel_route,
     TP_ARGS(
-        const char*, prefix, int, ret),
+        const char*, prefix, struct nhg_hash_entry *, nhe, int, ret),
     TP_FIELDS(
         ctf_string(prefix, prefix)
+        ctf_integer(uint32_t, nhe_id, nhe->id)
+        ctf_integer(uint32_t, nhe_flags, nhe->flags)
         ctf_integer(int, dplane_status, ret)
         )
    )
