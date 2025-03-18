@@ -4057,12 +4057,7 @@ void bgp_process_main_one(struct bgp *bgp, struct bgp_dest *dest, afi_t afi, saf
 			if (old_select && is_route_parent_evpn(old_select))
 				bgp_zebra_withdraw_actual(dest, old_select, bgp);
 
-			/* For EVPN imported route skip putting route add
-			 * to pending queue rather send directly to zebra.
-			 * else case covers the non EVPN impoted routes.
-			 */
-			if (is_route_parent_evpn(new_select) ||
-			    CHECK_FLAG(bgp->gr_info[afi][safi].flags, BGP_GR_SKIP_BP))
+			if (CHECK_FLAG(bgp->gr_info[afi][safi].flags, BGP_GR_SKIP_BP))
 				bgp_zebra_announce_actual(dest, new_select,
 							  bgp);
 			else
