@@ -35,14 +35,28 @@ int lib_vrf_peer_afi_safi_get_keys(struct nb_cb_get_keys_args *args)
 	args->keys->num = 1;
 	struct peer_af *paf;
 	paf = (struct peer_af *)args->list_entry;
-	strlcpy(args->keys->key[0], yang_afi_safi_value2identity(paf->afi, paf->safi),
-		sizeof(args->keys->key[0]));
+	if (yang_afi_safi_value2identity(paf->afi, paf->safi))
+		strlcpy(args->keys->key[0], yang_afi_safi_value2identity(paf->afi, paf->safi),
+			sizeof(args->keys->key[0]));
+	else
+		strlcpy(args->keys->key[0], "", sizeof(args->keys->key[0]));
 	return NB_OK;
 }
 
 const void *lib_vrf_peer_afi_safi_lookup_entry(struct nb_cb_lookup_entry_args *args)
 {
-	return NULL;
+	struct peer *peer = (struct peer *)args->parent_list_entry;
+	struct peer_af *paf = NULL;
+	enum bgp_af_index index;
+	if (!peer) {
+		DEBUGD(&nb_dbg_events, "Parent list doesn't hold peer");
+		return NULL;
+	}
+	const char *afisafi_name = args->keys->key[0];
+	index = yang_afi_safi_name2index(afisafi_name);
+	DEBUGD(&nb_dbg_events, "AFI index is %d", index);
+	paf = peer->peer_af_array[index];
+	return paf;
 }
 
 const void *lib_vrf_lookup_entry(struct nb_cb_lookup_entry_args *args)
@@ -122,7 +136,36 @@ int lib_vrf_peer_get_keys(struct nb_cb_get_keys_args *args)
 
 const void *lib_vrf_peer_lookup_entry(struct nb_cb_lookup_entry_args *args)
 {
-	return NULL;
+	if (!args || !args->keys || !args->parent_list_entry) {
+		DEBUGD(&nb_dbg_events, "Key or Parent list is NULL");
+		return NULL;
+	}
+	const char *peer_str = args->keys->key[0];
+	struct bgp *bgp = NULL;
+	struct peer *peer = NULL;
+	union sockunion su;
+	struct vrf *vrfp = (struct vrf *)args->parent_list_entry;
+
+	if (!vrfp) {
+		DEBUGD(&nb_dbg_events, "VRF NULL in parent list");
+		return NULL;
+	}
+	if (!vrfp->vrf_id)
+		bgp = bgp_get_default();
+	else
+		bgp = bgp_lookup_by_vrf_id(vrfp->vrf_id);
+	if (!bgp || !bgp->peer) {
+		DEBUGD(&nb_dbg_events, "No BGP peers in vrf %d", vrfp->vrf_id);
+		return NULL;
+	}
+	int ret = str2sockunion(peer_str, &su);
+	if (ret < 0) {
+		peer = peer_lookup_by_hostname(bgp, peer_str);
+		if (!peer)
+			peer = peer_lookup_by_conf_if(bgp, peer_str);
+		return peer;
+	} else
+		return peer_lookup(bgp, &su);
 }
 
 /*

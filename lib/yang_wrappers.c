@@ -5,7 +5,7 @@
  */
 
 #include <zebra.h>
-
+#include <bgpd/bgpd.h>
 #include "base64.h"
 #include "log.h"
 #include "lib_errors.h"
@@ -1158,4 +1158,16 @@ void yang_afi_safi_identity2value(const char *key, afi_t *afi, safi_t *safi)
 		*afi = AFI_UNSPEC;
 		*safi = SAFI_UNSPEC;
 	}
+}
+
+int yang_afi_safi_name2index(const char *name)
+{
+	int index = 0;
+	if (strmatch(name, "IPV4_UNICAST"))
+		index = BGP_AF_IPV4_UNICAST;
+	if (strmatch(name, "IPV6_UNICAST"))
+		index = BGP_AF_IPV6_UNICAST;
+	if (strmatch(name, "L2VPN_EVPN"))
+		index = BGP_AF_L2VPN_EVPN;
+	return index;
 }

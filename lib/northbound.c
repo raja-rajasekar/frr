@@ -20,6 +20,7 @@
 #include "northbound_db.h"
 #include "frrstr.h"
 #include "lib/wheel.h"
+#include "yang_wrappers.h"
 
 
 DEFINE_MTYPE_STATIC(LIB, NB_NODE, "Northbound Node");
@@ -1964,11 +1965,15 @@ static int nb_oper_data_iter_children(const struct lysc_node *snode, const char 
 static int nb_oper_data_iter_leaf(const struct nb_node *nb_node, const char *xpath,
 				  const void *list_entry, const struct yang_list_keys *list_keys,
 				  struct yang_translator *translator, uint32_t flags,
-				  nb_oper_data_cb cb, void *arg)
+				  nb_oper_data_cb cb, void *arg, char *leaf)
 {
 	struct yang_data *data;
 
 	if (CHECK_FLAG(nb_node->snode->flags, LYS_CONFIG_W))
+		return NB_OK;
+
+	/* Check if leaf matches */
+	if (leaf && strcmp(nb_node->snode->name, leaf))
 		return NB_OK;
 
 	/* Ignore list keys. */
@@ -2182,7 +2187,7 @@ static int nb_oper_data_iter_node(const struct lysc_node *snode, const char *xpa
 		break;
 	case LYS_LEAF:
 		ret = nb_oper_data_iter_leaf(nb_node, xpath, list_entry, list_keys, translator,
-					     flags, cb, arg);
+					     flags, cb, arg, leaf);
 		break;
 	case LYS_LEAFLIST:
 		ret = nb_oper_data_iter_leaflist(nb_node, xpath, list_entry, list_keys, translator,
@@ -2214,7 +2219,7 @@ static int get_leaf_len(const char *xpath)
 		if (xpath[i] == '/')
 			break;
 	}
-	DEBUGD(&nb_dbg_events, "Leaf position %d xpath len %d", i, strlen(xpath));
+	DEBUGD(&nb_dbg_events, "Leaf position %d xpath len %d", i, (int)strlen(xpath));
 	return strlen(xpath) - i - 1;
 }
 
@@ -2246,7 +2251,7 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 		strncpy(leaf, xpath + (strlen(xpath) - len), len);
 		DEBUGD(&nb_dbg_events, "Leaf name is %s", leaf);
 		/* Memset the leaf predicate name part of the xpath */
-		memset(xpath + (strlen(xpath) - len - 1), 0, len);
+		memset((char *)xpath + (strlen(xpath) - len - 1), 0, len);
 		/* Reset the nb_node to find the parent operational info */
 		nb_node = nb_node_find(xpath);
 	}
@@ -2268,20 +2273,28 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 	 */
 	list_dnodes = list_new();
 	for (dn = dnode; dn; dn = lyd_parent(dn)) {
-		if (!CHECK_FLAG(dn->schema->nodetype, LYS_CONTAINER | LYS_LIST) ||
-		    !lyd_child_no_keys(dn))
+		if (!lyd_child_no_keys(dn))
 			continue;
-		listnode_add_head(list_dnodes, lyd_child_no_keys(dn));
+		listnode_add(list_dnodes, lyd_child_no_keys(dn));
 	}
-
+	/*
+	 * Optimize for leafs and by adding child paths to the list
+	 * for pre-lookup before processing the end node
+	 */
+	struct lyd_node *child;
+	child = lyd_child_no_keys(dnode);
+	while (child) {
+		listnode_add(list_dnodes, child);
+		child = lyd_child_no_keys(child);
+	}
 	/*
 	 * Use the northbound callbacks to find list entry pointer corresponding
 	 * to the given XPath.
 	 */
 	for (ALL_LIST_ELEMENTS_RO(list_dnodes, ln, dn)) {
-		struct lyd_node *child;
 		struct nb_node *nn;
 		unsigned int n = 0;
+		char *nxpath = NULL;
 
 		/* Obtain the list entry keys. */
 		memset(&list_keys, 0, sizeof(list_keys));
@@ -2290,6 +2303,7 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 				break;
 			strlcpy(list_keys.key[n], yang_dnode_get_string(child, NULL),
 				sizeof(list_keys.key[n]));
+			DEBUGD(&nb_dbg_events, "Key is %s", list_keys.key[n]);
 			n++;
 		}
 		list_keys.num = n;
@@ -2300,7 +2314,9 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 		}
 
 		/* Find the list entry pointer. */
-		nn = dn->schema->priv;
+		nxpath = lyd_path((struct lyd_node *)dn, LYD_PATH_STD, NULL, 0);
+		DEBUGD(&nb_dbg_events, "Dnode xpath %s", nxpath);
+		nn = nb_node_find(nxpath);
 		if (!nn->cbs.lookup_entry) {
 			flog_warn(EC_LIB_NB_OPERATIONAL_DATA,
 				  "%s: data path doesn't support iteration over operational data: %s",
@@ -2309,7 +2325,6 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 			yang_dnode_free(dnode);
 			return NB_ERR;
 		}
-
 		list_entry = nb_callback_lookup_entry(nn, list_entry, &list_keys);
 		if (list_entry == NULL) {
 			list_delete(&list_dnodes);
@@ -2319,9 +2334,9 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 	}
 
 	/* If a list entry was given, iterate over that list entry only. */
-	if (dnode->schema->nodetype == LYS_LIST && lyd_child(dnode))
+	if ((dnode->schema->nodetype == LYS_LIST && lyd_child(dnode)) || leaf)
 		ret = nb_oper_data_iter_children(nb_node->snode, xpath, list_entry, &list_keys,
-						 translator, true, flags, cb, arg, NULL);
+						 translator, true, flags, cb, arg, leaf);
 	else
 		ret = nb_oper_data_iter_node(nb_node->snode, xpath, list_entry, &list_keys,
 					     translator, true, flags, cb, arg, leaf);
