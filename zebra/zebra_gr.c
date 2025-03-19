@@ -550,56 +550,65 @@ static void zebra_gr_cleanup_of_non_gr_vrf(struct zebra_gr_afi_clean *gac)
 	}
 }
 
-static void zebra_gr_complete_check(struct zserv *client, bool do_evpn_cleanup,
-				    struct zebra_gr_afi_clean *gac)
+static void zebra_gr_complete_check(struct zserv *client, struct zebra_gr_afi_clean *gac)
 {
 #if defined(HAVE_CSMGR)
 
 	struct client_gr_info *info;
 
 	/* Check to see if we have to send an INIT_COMPLETE */
-	if (zrouter.graceful_restart) {
-		TAILQ_FOREACH (info, &client->gr_info_queue, gr_info) {
-			if (!info->route_sync_done || info->t_stale_removal) {
-				LOG_GR("GR %s: Not done for %s, route_sync %d", __func__,
-				       vrf_id_to_name(info->vrf_id), info->route_sync_done);
-				frrtrace(2, frr_zebra, gr_complete_check,
-					 vrf_id_to_name(info->vrf_id), info->route_sync_done);
-				return;
-			}
+	if (!zrouter.graceful_restart)
+		return;
+
+	TAILQ_FOREACH (info, &client->gr_info_queue, gr_info) {
+		if (!info->route_sync_done || info->t_stale_removal) {
+			LOG_GR("GR %s: Not done for %s, route_sync %d", __func__,
+			       vrf_id_to_name(info->vrf_id), info->route_sync_done);
+			frrtrace(2, frr_zebra, gr_complete_check, vrf_id_to_name(info->vrf_id),
+				 info->route_sync_done);
+			return;
+		}
+	}
+
+	if (!zrouter.all_instances_gr_done) {
+		/*
+		 * Before we cleanup l2vpn entries from kernel, we
+		 * need to cleanup stale ipv4 & ipv6 unicast routes that
+		 * were imported from default EVPN VRF into GR disabled
+		 * destination VRF and installed in kernel in that
+		 * destination VRF.
+		 */
+		zebra_gr_cleanup_of_non_gr_vrf(gac);
+
+		/*
+		 * Clean up evpn entries
+		 */
+		zebra_evpn_stale_entries_cleanup(gac->update_pending_time);
+
+		LOG_GR("GR %s: All instances GR done, triggering INIT_COMPLETE", __func__);
+
+		frrtrace(1, frr_zebra, gr_complete, 1);
+		frr_csm_send_init_complete();
+		zrouter.all_instances_gr_done = true;
+		zrouter.gr_completion_time = monotime(NULL);
+
+		/*
+		 * Enqueue gr complete ctx to dplane thread
+		 * for last route re-installation.
+		 */
+		LOG_GR("GR %s: Send GR complete to dplane", __func__);
+		enum zebra_dplane_result ret;
+
+		ret = dplane_gr_complete();
+		if (ret == ZEBRA_DPLANE_REQUEST_FAILURE) {
+			flog_err(EC_ZEBRA_DP_INSTALL_FAIL, "Failed to enqueue GR completion");
 		}
 
-		if (do_evpn_cleanup && gac) {
-			/*
-			 * Before we cleanup l2vpn entries from kernel, we
-			 * need to cleanup stale ipv4 & ipv6 unicast routes that
-			 * were imported from default EVPN VRF into GR disabled
-			 * destination VRF and installed in kernel in that
-			 * destination VRF.
-			 */
-			zebra_gr_cleanup_of_non_gr_vrf(gac);
-
-			/*
-			 * Clean up evpn entries
-			 */
-			zebra_evpn_stale_entries_cleanup(gac->update_pending_time);
-		}
-
-		if (!zrouter.all_instances_gr_done) {
-			LOG_GR("GR %s: All instances GR done, triggering INIT_COMPLETE", __func__);
-
-			frrtrace(1, frr_zebra, gr_complete, 1);
-			frr_csm_send_init_complete();
-			zrouter.all_instances_gr_done = true;
-			zrouter.gr_completion_time = monotime(NULL);
-			/*
-			 * Stop the RIB sweep timer
-			 */
-			EVENT_OFF(zrouter.t_rib_sweep);
-			zrouter.rib_sweep_time = 0;
-		}
-
-		zebra_gr_last_rt_reinstall_check();
+		/*
+		 * Stop the RIB sweep timer
+		 */
+		EVENT_OFF(zrouter.t_rib_sweep);
+		zrouter.rib_sweep_time = 0;
 	}
 #endif
 }
@@ -749,7 +758,7 @@ static void zebra_gr_delete_stale_route_table_afi(struct event *event)
 		return;
 
 complete:
-	zebra_gr_complete_check(client, true, gac);
+	zebra_gr_complete_check(client, gac);
 
 done:
 	XFREE(MTYPE_ZEBRA_GR, gac);

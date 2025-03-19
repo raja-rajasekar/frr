@@ -2080,37 +2080,19 @@ static void zebra_gr_reinstall_last_route(void)
 /*
  * Reinstalls the last route after GR is done
  */
-void zebra_gr_last_rt_reinstall_check(void)
+static void zebra_gr_last_route_reinstall(void)
 {
 #if defined(HAVE_CSMGR)
 	/*
-	 * Check to see if we have to reinstall the last route.
-	 *
-	 * If GR is enabled and if GR for all instances is done,
-	 * and if we haven't installed the last route yet,
-	 * then check if the total number of processed routes is
-	 * greater than or equal to total number of queued routes.
-	 * If yes, then go ahead and install the last route.
-	 *
-	 * Checking if (z_gr_ctx.total_processed_rt >= z_gr_ctx.total_queued_rt)
-	 * is to make sure that if zebra declares GR ready but if
-	 * some of the routes are still in early route metaQ, then
-	 * this check will make sure that we wait for those routes to be
-	 * processed before we install the last route.
-	 *
 	 * Last route needs to be installed only once.
 	 */
 	if (zrouter.graceful_restart && zrouter.all_instances_gr_done &&
 	    !zrouter.gr_last_rt_installed) {
 		z_gr_ctx.total_evpn_entries_queued = zebra_gr_queued_cnt_get();
-
-		if ((z_gr_ctx.total_processed_rt >= z_gr_ctx.total_queued_rt) &&
-		    (z_gr_ctx.total_evpn_entries_processed >= z_gr_ctx.total_evpn_entries_queued)) {
-			if (IS_ZEBRA_DEBUG_EVENT)
-				zlog_debug("GR %s: Reinstalling last route and sending NL INFO to CSMgr",
-					   __func__);
-			zebra_gr_reinstall_last_route();
-		}
+		if (IS_ZEBRA_DEBUG_EVENT)
+			zlog_debug("GR %s: Reinstalling last route and sending NL INFO to CSMgr",
+				   __func__);
+		zebra_gr_reinstall_last_route();
 	}
 #endif
 }
@@ -2178,12 +2160,6 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 	zvrf = zebra_vrf_lookup_by_id(dplane_ctx_get_vrf(ctx));
 	vrf = vrf_lookup_by_id(dplane_ctx_get_vrf(ctx));
 
-	/*
-	 * Increment the total processed routes. SAFI check is not required here
-	 * since this function is called only for unicast SAFI.
-	 */
-	zebra_gr_increment_processed_rt_count(NULL, dplane_ctx_get_vrf(ctx), false);
-
 	/* Locate rn and re(s) from ctx */
 	rn = rib_find_rn_from_ctx(ctx);
 	if (rn == NULL) {
@@ -2194,6 +2170,12 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 		}
 		goto done;
 	}
+
+	/*
+	 * Increment the total processed routes. SAFI check is not required here
+	 * since this function is called only for unicast SAFI.
+	 */
+	zebra_gr_increment_processed_rt_count(NULL, dplane_ctx_get_vrf(ctx), false);
 
 	dest = rib_dest_from_rnode(rn);
 	info = srcdest_rnode_table_info(rn);
@@ -2417,11 +2399,6 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 		    (old_re && RIB_SYSTEM_ROUTE(old_re)))
 			zebra_rib_fixup_system(rn);
 	}
-
-	/*
-	 * Check to if last route needs to be reinstalled
-	 */
-	zebra_gr_last_rt_reinstall_check();
 
 	zebra_rib_evaluate_rn_nexthops(rn, seq, rt_delete);
 	zebra_rib_evaluate_mpls(rn);
@@ -5191,6 +5168,12 @@ static void rib_process_dplane_results(struct event *thread)
 
 			case DPLANE_OP_ROUTE_NOTIFY:
 				rib_process_dplane_notify(ctx);
+				break;
+			case DPLANE_OP_GR_COMPLETE:
+				if (IS_ZEBRA_DEBUG_DPLANE_DETAIL || IS_ZEBRA_DEBUG_EVENT)
+					zlog_debug("GR: Reinstalling last route");
+
+				zebra_gr_last_route_reinstall();
 				break;
 
 			case DPLANE_OP_NH_INSTALL:

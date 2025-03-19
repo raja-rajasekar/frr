@@ -6627,10 +6627,6 @@ extern void zebra_vxlan_handle_result(struct zebra_dplane_ctx *ctx)
 		return;
 	}
 
-	/*
-	 * Check if last route needs to be reinstalled
-	 */
-	zebra_gr_last_rt_reinstall_check();
 #endif
 	return;
 }

@@ -369,7 +369,6 @@ extern void rib_delnode(struct route_node *rn, struct route_entry *re);
 extern void rib_install_kernel(struct route_node *rn, struct route_entry *re,
 			       struct route_entry *old, bool last_route);
 extern void rib_uninstall_kernel(struct route_node *rn, struct route_entry *re);
-extern void zebra_gr_last_rt_reinstall_check(void);
 
 /* NOTE:
  * All rib_add function will not just add prefix into RIB, but
