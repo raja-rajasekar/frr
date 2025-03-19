@@ -216,6 +216,9 @@ enum dplane_op_e {
 	DPLANE_OP_SRV6_ENCAP_SRCADDR_SET,
 
 	DPLANE_OP_ROUTE_LAST,
+
+	/* Signal GR completion */
+	DPLANE_OP_GR_COMPLETE,
 };
 
 /* Operational status of Bridge Ports */
@@ -1073,6 +1076,9 @@ enum zebra_dplane_result
 dplane_pbr_ipset_entry_add(struct zebra_pbr_ipset_entry *ipset);
 enum zebra_dplane_result
 dplane_pbr_ipset_entry_delete(struct zebra_pbr_ipset_entry *ipset);
+
+/* gr complete */
+enum zebra_dplane_result dplane_gr_complete(void);
 
 /* Encode route information into data plane context. */
 int dplane_ctx_route_init(struct zebra_dplane_ctx *ctx, enum dplane_op_e op,

@@ -917,6 +917,7 @@ static void dplane_ctx_free_internal(struct zebra_dplane_ctx *ctx)
 	case DPLANE_OP_INTF_NETCONFIG:
 	case DPLANE_OP_STARTUP_STAGE:
 	case DPLANE_OP_SRV6_ENCAP_SRCADDR_SET:
+	case DPLANE_OP_GR_COMPLETE:
 		break;
 	case DPLANE_OP_VLAN_INSTALL:
 		if (ctx->u.vlan_info.vlan_array)
@@ -1278,6 +1279,9 @@ const char *dplane_op2str(enum dplane_op_e op)
 
 	case DPLANE_OP_VLAN_INSTALL:
 		ret = "NEW_VLAN";
+		break;
+	case DPLANE_OP_GR_COMPLETE:
+		ret = "GR_COMPLETE";
 		break;
 	}
 
@@ -4338,6 +4342,16 @@ dplane_ctx_ipset_entry_init(struct zebra_dplane_ctx *ctx, enum dplane_op_e op,
 	return AOK;
 }
 
+static int dplane_ctx_gr_complete_init(struct zebra_dplane_ctx *ctx, enum dplane_op_e op)
+{
+	ctx->zd_op = op;
+	ctx->zd_status = ZEBRA_DPLANE_REQUEST_SUCCESS;
+
+	/* capture namespace */
+	dplane_ctx_ns_init(ctx, zebra_ns_lookup(NS_DEFAULT), false);
+
+	return AOK;
+}
 
 /*
  * Enqueue a new update,
@@ -6952,6 +6966,9 @@ static void kernel_dplane_log_detail(struct zebra_dplane_ctx *ctx)
 			   dplane_op2str(dplane_ctx_get_op(ctx)),
 			   dplane_ctx_get_vlan_ifindex(ctx));
 		break;
+	case DPLANE_OP_GR_COMPLETE:
+		zlog_debug("Dplane GR complete");
+		break;
 	}
 }
 
@@ -7120,6 +7137,7 @@ static void kernel_dplane_handle_result(struct zebra_dplane_ctx *ctx)
 	case DPLANE_OP_SYS_ROUTE_DELETE:
 	case DPLANE_OP_ROUTE_NOTIFY:
 	case DPLANE_OP_LSP_NOTIFY:
+	case DPLANE_OP_GR_COMPLETE:
 		break;
 
 	/* TODO -- error counters for incoming events? */
@@ -7966,4 +7984,35 @@ void zebra_dplane_init(int (*results_fp)(struct dplane_ctx_list_head *))
 {
 	zebra_dplane_init_internal();
 	zdplane_info.dg_results_cb = results_fp;
+}
+
+static enum zebra_dplane_result dplane_gr_complete_internal(enum dplane_op_e op)
+{
+	enum zebra_dplane_result result = ZEBRA_DPLANE_REQUEST_FAILURE;
+	int ret;
+	struct zebra_dplane_ctx *ctx = NULL;
+
+	/* Obtain context block */
+	ctx = dplane_ctx_alloc();
+	if (!ctx) {
+		ret = ENOMEM;
+		return result;
+	}
+
+	/* Init context with info from zebra data structs */
+	ret = dplane_ctx_gr_complete_init(ctx, op);
+	if (ret == AOK) {
+		ret = dplane_update_enqueue(ctx);
+		result = ZEBRA_DPLANE_REQUEST_QUEUED;
+	} else {
+		if (ctx)
+			dplane_ctx_free(&ctx);
+	}
+
+	return result;
+}
+
+enum zebra_dplane_result dplane_gr_complete(void)
+{
+	return dplane_gr_complete_internal(DPLANE_OP_GR_COMPLETE);
 }
