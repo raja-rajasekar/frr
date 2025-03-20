@@ -18412,9 +18412,19 @@ static bool peergroup_filter_check(struct peer *peer, afi_t afi, safi_t safi,
 {
 	struct bgp_filter *filter;
 
-	if (peer_group_active(peer))
-		return !!CHECK_FLAG(peer->filter_override[afi][safi][direct],
-				    type);
+	/* For advertise-map, condition:exist/non-exist is stored in
+	 * peer->filter for all peers. The input param direct is compared
+	 * against condition which is not stored in filter_override, so if
+	 * filter_override is set for active peer we go and verify the
+	 * condition in the common switch case below.
+	 */
+	if (peer_group_active(peer)) {
+		if (type != PEER_FT_ADVERTISE_MAP)
+			return !!CHECK_FLAG(peer->filter_override[afi][safi][direct], type);
+		else if (!CHECK_FLAG(peer->filter_override[afi][safi][RMAP_OUT], type)) {
+			return false;
+		}
+	}
 
 	filter = &peer->filter[afi][safi];
 	switch (type) {
