@@ -2334,12 +2334,18 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 	}
 
 	/* If a list entry was given, iterate over that list entry only. */
-	if ((dnode->schema->nodetype == LYS_LIST && lyd_child(dnode)) || leaf)
+	if ((dnode->schema->nodetype == LYS_LIST && lyd_child(dnode)) || leaf ||
+	    nb_node->snode->nodetype == LYS_LIST) {
+		DEBUGD(&nb_dbg_events, "nb_oper_data_iter_children for dnode type %d, snode %d",
+		       dnode->schema->nodetype, nb_node->snode->nodetype);
 		ret = nb_oper_data_iter_children(nb_node->snode, xpath, list_entry, &list_keys,
 						 translator, true, flags, cb, arg, leaf);
-	else
+	} else {
+		DEBUGD(&nb_dbg_events, "nb_oper_data_iter_node for dnode type %d, snode %d",
+		       dnode->schema->nodetype, nb_node->snode->nodetype);
 		ret = nb_oper_data_iter_node(nb_node->snode, xpath, list_entry, &list_keys,
 					     translator, true, flags, cb, arg, leaf);
+	}
 
 	list_delete(&list_dnodes);
 	yang_dnode_free(dnode);
