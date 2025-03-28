@@ -677,7 +677,9 @@ static void bgp_pcount_installed(struct bgp_dest *dest, struct bgp_path_info *pi
 {
 	struct bgp_table *table;
 	table = bgp_dest_table(dest);
-	if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED) && set)
+
+	zlog_debug("flag %d, pi->flag %d, set %d", flag, pi->flags, set);
+	if (CHECK_FLAG(flag, BGP_PATH_SELECTED) && set)
 		pi->peer->pinstalledcnt[table->afi][table->safi]++;
 
 	if (CHECK_FLAG(flag, BGP_PATH_SELECTED) && !set) {
