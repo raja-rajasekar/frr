@@ -2282,7 +2282,6 @@ static void zread_route_add(ZAPI_HANDLER_ARGS)
 	if (nhe.nhg.nexthop) {
 		char buf[MULTIPATH_NUM * (NEXTHOP_STRLEN + 1) + 1];
 		char lttng_buf_prefix[PREFIX_STRLEN];
-
 		prefix2str(&api.prefix, lttng_buf_prefix,
 			   sizeof(lttng_buf_prefix));
 		nexthop_group2str(&nhe.nhg, buf, sizeof(buf));
