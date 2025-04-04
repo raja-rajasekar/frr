@@ -504,9 +504,6 @@ struct bgp {
 	struct as_confed *confed_peers;
 	int confed_peers_cnt;
 
-	/* start-up timer on only once at the beginning */
-	struct event *t_startup;
-
 	uint32_t v_maxmed_onstartup; /* Duration of max-med on start-up */
 #define BGP_MAXMED_ONSTARTUP_UNCONFIGURED  0 /* 0 means off, its the default */
 	uint32_t maxmed_onstartup_value;     /* Max-med value when active on
