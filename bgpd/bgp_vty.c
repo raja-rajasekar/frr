@@ -118,9 +118,11 @@ FRR_CFG_DEFAULT_BOOL(BGP_SUPPRESS_DUPLICATES,
 	{ .val_bool = true },
 );
 FRR_CFG_DEFAULT_BOOL(BGP_GRACEFUL_NOTIFICATION,
-	{ .val_bool = false, .match_version = "< 8.3", },
-	{ .val_bool = true },
-);
+		     {
+			     .val_bool = false,
+			     .match_version = "< 8.3",
+		     },
+		     { .val_bool = false }, );
 FRR_CFG_DEFAULT_BOOL(BGP_HARD_ADMIN_RESET,
 	{ .val_bool = false, .match_version = "< 8.3", },
 	{ .val_bool = true },
