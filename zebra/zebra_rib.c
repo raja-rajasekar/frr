@@ -1922,6 +1922,28 @@ done:
 }
 
 
+/* Finds existing entry and deletes it. Add new entry if ADD/UPDATE */
+void nhe_re_tree_replace(struct nhe_re_tree_head *head, struct route_entry *re_to_oper, bool is_del)
+{
+	struct route_entry *old_re = NULL;
+
+	if (head->rr.rbt_root != NULL) {
+		old_re = nhe_re_tree_find(head, re_to_oper);
+		if (old_re) {
+			if (IS_ZEBRA_DEBUG_RIB_DETAILED)
+				zlog_debug("RAJA %s Found and deleting old_re %p", __func__, old_re);
+
+			nhe_re_tree_del(head, old_re);
+		}
+	}
+
+	if (!is_del) {
+		nhe_re_tree_add(head, re_to_oper);
+		if (IS_ZEBRA_DEBUG_RIB_DETAILED)
+			zlog_debug("RAJA %s Added new_re %p", __func__, old_re);
+	}
+}
+
 
 /*
  * Route-update results processing after async dataplane update.
@@ -2033,6 +2055,9 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 	}
 
 	if (op == DPLANE_OP_ROUTE_INSTALL || op == DPLANE_OP_ROUTE_UPDATE) {
+		if (re)
+			nhe_re_tree_replace(&re->nhe->re_head, re, false);
+
 		if (status == ZEBRA_DPLANE_REQUEST_SUCCESS) {
 			if (re) {
 				UNSET_FLAG(re->status, ROUTE_ENTRY_FAILED);
@@ -2125,8 +2150,10 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 		}
 	} else if (op == DPLANE_OP_ROUTE_DELETE) {
 		rt_delete = true;
-		if (re)
+		if (re) {
+			nhe_re_tree_replace(&re->nhe->re_head, re, true);
 			SET_FLAG(re->status, ROUTE_ENTRY_FAILED);
+		}
 		/*
 		 * In the delete case, the zebra core datastructs were
 		 * updated (or removed) at the time the delete was issued,
@@ -4041,6 +4068,12 @@ void rib_unlink(struct route_node *rn, struct route_entry *re)
 			    (void *)re);
 
 	dest = rib_dest_from_rnode(rn);
+
+	if (IS_ZEBRA_DEBUG_RIB_DETAILED)
+		zlog_debug("RAJA %s Deleting re %p (%pRN, %s) from NHE %u (%p) re-tree", __func__,
+			   re, re->rn, zebra_route_string(re->type), re->nhe->id, re->nhe);
+
+	nhe_re_tree_replace(&re->nhe->re_head, re, true);
 
 	re->rn = NULL;
 	re_list_del(&dest->routes, re);
