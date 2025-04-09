@@ -390,6 +390,10 @@ struct nhg_hash_entry *zebra_nhg_alloc(void)
 	struct nhg_hash_entry *nhe;
 
 	nhe = XCALLOC(MTYPE_NHG, sizeof(struct nhg_hash_entry));
+	if (IS_ZEBRA_DEBUG_NHG_DETAIL)
+		zlog_debug("%s Creating the nhe %u (%p) re-tree", __func__, nhe->id, nhe);
+
+	nhe_re_tree_init(&nhe->re_head);
 
 	return nhe;
 }
@@ -1213,6 +1217,7 @@ static void zebra_nhg_handle_kernel_state_change(struct nhg_hash_entry *nhe,
 			(is_delete ? "deleted" : "updated"), nhe);
 
 		UNSET_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED);
+		SET_FLAG(nhe->flags, NEXTHOP_GROUP_KERNEL_DEL);
 		zebra_nhg_install_kernel(nhe, ZEBRA_ROUTE_MAX);
 	} else
 		zebra_nhg_handle_uninstall(nhe);
@@ -1696,6 +1701,15 @@ void zebra_nhg_free(struct nhg_hash_entry *nhe)
 
 	EVENT_OFF(nhe->timer);
 
+	if (IS_ZEBRA_DEBUG_NHG_DETAIL)
+		zlog_debug("%s Deleting the nhe %u (%p) re-tree", __func__, nhe->id, nhe);
+
+	struct route_entry *re = NULL;
+	/* Just pop entries until tree is empty */
+	while ((re = nhe_re_tree_pop(&nhe->re_head)) != NULL)
+		;
+
+	nhe_re_tree_fini(&nhe->re_head);
 	zebra_nhg_free_members(nhe);
 
 	XFREE(MTYPE_NHG, nhe);
@@ -3535,6 +3549,32 @@ void zebra_nhg_dplane_result(struct zebra_dplane_ctx *ctx)
 		case ZEBRA_DPLANE_REQUEST_SUCCESS:
 			SET_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED);
 			zebra_nhg_handle_install(nhe, true);
+
+			if (CHECK_FLAG(nhe->flags, NEXTHOP_GROUP_KERNEL_DEL)) {
+				while (nhe_re_tree_count(&nhe->re_head)) {
+					struct route_entry *re = nhe_re_tree_pop(&nhe->re_head);
+					if (IS_ZEBRA_DEBUG_NHG_DETAIL)
+						zlog_debug("%s Route re-install for re %p (%pRN, %s) on nhe %u (%p)",
+							   __func__, re, re->rn,
+							   zebra_route_string(re->type), id, nhe);
+
+					/*
+					 * There is always a case where (say initially BGP was best)
+					 * which we try to install in kernel and it fails because
+					 * NHG installation failed.
+					 * Now when NHG installation is successful, if OSPF/Static
+					 * is preferred to be installed/already installed, we dont
+					 * want to be installing this BGP route entry anymore, in
+					 * which case we just remove that entry (just in case).
+					 */
+					if (CHECK_FLAG(re->flags, ZEBRA_FLAG_SELECTED))
+						rib_install_kernel(re->rn, re, NULL);
+					else
+						nhe_re_tree_replace(&re->nhe->re_head, re, true);
+				}
+			}
+
+			UNSET_FLAG(nhe->flags, NEXTHOP_GROUP_KERNEL_DEL);
 
 			/* If daemon nhg, send it an update */
 			if (PROTO_OWNED(nhe))
