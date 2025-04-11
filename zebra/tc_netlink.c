@@ -710,7 +710,7 @@ int netlink_qdisc_change(struct nlmsghdr *h, ns_id_t ns_id, int startup)
 	int len;
 	struct rtattr *tb[TCA_MAX + 1];
 
-	frrtrace(3, frr_zebra, netlink_tc_qdisc_change, h, ns_id, startup);
+	// frrtrace(3, frr_zebra, netlink_tc_qdisc_change, h, ns_id, startup);
 
 	len = h->nlmsg_len - NLMSG_LENGTH(sizeof(struct tcmsg));
 
@@ -779,7 +779,7 @@ int netlink_tclass_change(struct nlmsghdr *h, ns_id_t ns_id, int startup)
 	int len;
 	struct rtattr *tb[TCA_MAX + 1];
 
-	frrtrace(3, frr_zebra, netlink_tc_class_change, h, ns_id, startup);
+	// frrtrace(3, frr_zebra, netlink_tc_class_change, h, ns_id, startup);
 
 	len = h->nlmsg_len - NLMSG_LENGTH(sizeof(struct tcmsg));
 
@@ -815,7 +815,7 @@ int netlink_tfilter_change(struct nlmsghdr *h, ns_id_t ns_id, int startup)
 	int len;
 	struct rtattr *tb[TCA_MAX + 1];
 
-	frrtrace(3, frr_zebra, netlink_tc_filter_change, h, ns_id, startup);
+	// frrtrace(3, frr_zebra, netlink_tc_filter_change, h, ns_id, startup);
 
 	len = h->nlmsg_len - NLMSG_LENGTH(sizeof(struct tcmsg));
 

@@ -592,6 +592,15 @@ TRACEPOINT_EVENT(
 		)
 	)
 
+#if 0
+/* NOTE: This traces are not producing any meaningful data
+ * For now commenting out for CL so it does not fill up
+ * trace buffer.
+ *
+ * Example: 2025-04-11T22:56:00.562
+ * frr_zebra:netlink_tc_qdisc_change
+ * {'header': 94242850980164, 'ns_id': 0, 'startup': 1}
+ */
 TRACEPOINT_EVENT(
 	frr_zebra,
 	netlink_tc_qdisc_change,
@@ -634,6 +643,7 @@ TRACEPOINT_EVENT(
 		ctf_integer(uint32_t, startup, startup)
 		)
 	)
+#endif
 
 TRACEPOINT_LOGLEVEL(frr_zebra, netlink_send_msg, TRACE_INFO)
 
