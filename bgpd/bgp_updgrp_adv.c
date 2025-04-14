@@ -556,8 +556,9 @@ bool bgp_adj_out_set_subgroup(struct bgp_dest *dest,
 
 			bgp_dump_attr(attr, attr_str, sizeof(attr_str));
 
-			zlog_debug("%s suppress UPDATE w/ attr: %s", peer->host,
-				   attr_str);
+			zlog_debug("%s suppress UPDATE w/ attr: %s, afi=%s, safi=%s, p=%pRN ",
+				   peer->host, attr_str, afi2str(afi), safi2str(safi),
+				   bgp_dest_to_rnode(dest));
 		}
 
 		/*
