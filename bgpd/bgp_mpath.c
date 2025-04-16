@@ -497,8 +497,10 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 		 */
 		if (mpath_count >= maxpaths) {
 			while (cur_iterator) {
-				UNSET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
-				UNSET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH_NEW);
+			    if (cur_iterator->net && CHECK_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH))
+			        bgp_pcount_installed(cur_iterator->net, cur_iterator, BGP_PATH_MULTIPATH, false);
+			    UNSET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
+			    UNSET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH_NEW);
 
 				cur_iterator = cur_iterator->next;
 			}
@@ -518,6 +520,8 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 		 * or a new path
 		 */
 		if (!old_mpath && !new_mpath) {
+		    if (cur_iterator->net && CHECK_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH))
+		        bgp_pcount_installed(cur_iterator->net, cur_iterator, BGP_PATH_MULTIPATH, false);
 			UNSET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
 			cur_iterator = cur_iterator->next;
 			continue;
@@ -528,6 +532,8 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 
 			if (cur_iterator != new_best)
 				SET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
+			if (cur_iterator->net)
+			    bgp_pcount_installed(cur_iterator->net, cur_iterator, BGP_PATH_MULTIPATH, true);
 
 			if (!old_mpath)
 				mpath_changed = true;
@@ -554,6 +560,8 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 			 * We know that old_mpath is true and new_mpath is false in this path
 			 */
 			mpath_changed = true;
+			if (cur_iterator->net && CHECK_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH))
+			    bgp_pcount_installed(cur_iterator->net, cur_iterator, BGP_PATH_MULTIPATH, false);
 			UNSET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
 			if (eval_soo_per_nhg)
 				bgp_process_route_soo_attr(table->bgp, table->afi, table->safi,
