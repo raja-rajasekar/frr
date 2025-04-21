@@ -1998,15 +1998,16 @@ static void zebra_gr_reinstall_last_route(void)
 		 z_gr_ctx.total_evpn_entries_queued, z_gr_ctx.total_evpn_entries_processed);
 
 	/* Reinstall the last route */
-	if (z_gr_ctx.rn && z_gr_ctx.rn->info && z_gr_ctx.re &&
-	    !CHECK_FLAG(z_gr_ctx.re->status, ROUTE_ENTRY_REMOVED)) {
-		if (IS_ZEBRA_DEBUG_EVENT)
-			zlog_debug("GR %s: Reinstalling last route %pRN %u:%u", __func__,
-				   z_gr_ctx.rn, z_gr_ctx.re->vrf_id, z_gr_ctx.re->table);
+	if (z_gr_ctx.rn && z_gr_ctx.rn->info && z_gr_ctx.re) {
+		rib_dest_t *dest;
+		bool last_re_found = false;
+		char trace_pfx_buf[PREFIX_STRLEN];
 
 		route_lock_node(z_gr_ctx.rn);
 
-		char trace_pfx_buf[PREFIX_STRLEN];
+		if (IS_ZEBRA_DEBUG_EVENT)
+			zlog_debug("GR %s: Reinstalling last route %pRN %u:%u", __func__,
+				   z_gr_ctx.rn, z_gr_ctx.re->vrf_id, z_gr_ctx.re->table);
 
 		prefix2str(&z_gr_ctx.rn->p, trace_pfx_buf, sizeof(trace_pfx_buf));
 
@@ -2017,48 +2018,50 @@ static void zebra_gr_reinstall_last_route(void)
 		 * Skip last route installtion if z_gr_ctx.rn's
 		 * selected_fib is not available.
 		 */
-		if (!CHECK_FLAG(z_gr_ctx.re->status, ROUTE_ENTRY_INSTALLED)) {
-			rib_dest_t *dest;
-
-			dest = rib_dest_from_rnode(z_gr_ctx.rn);
-
-			if (dest && dest->selected_fib && dest->selected_fib != z_gr_ctx.re &&
-			    !CHECK_FLAG(dest->selected_fib->status, ROUTE_ENTRY_REMOVED) &&
-			    CHECK_FLAG(dest->selected_fib->status, ROUTE_ENTRY_INSTALLED)) {
-				if (IS_ZEBRA_DEBUG_EVENT)
-					zlog_debug("GR %s: last route re %p is not the best",
-						   __func__, z_gr_ctx.re);
-
-				if (dest->selected_fib->type == ZEBRA_ROUTE_BGP) {
-					z_gr_ctx.re = dest->selected_fib;
-
+		dest = rib_dest_from_rnode(z_gr_ctx.rn);
+		if (dest && dest->selected_fib) {
+			if (dest->selected_fib != z_gr_ctx.re) {
+				if (!CHECK_FLAG(dest->selected_fib->status, ROUTE_ENTRY_REMOVED) &&
+				    CHECK_FLAG(dest->selected_fib->status, ROUTE_ENTRY_INSTALLED)) {
 					if (IS_ZEBRA_DEBUG_EVENT)
-						zlog_debug("GR %s: last route updated to re %p",
+						zlog_debug("GR %s: last installed re %p not found",
 							   __func__, z_gr_ctx.re);
-				} else {
-					route_unlock_node(z_gr_ctx.rn);
-					z_gr_ctx.re = NULL;
 
-					if (IS_ZEBRA_DEBUG_EVENT)
-						zlog_debug("GR %s: last installed BGP route not found",
-							   __func__);
+					if (dest->selected_fib->type == ZEBRA_ROUTE_BGP) {
+						z_gr_ctx.re = dest->selected_fib;
+						last_re_found = true;
+
+						if (IS_ZEBRA_DEBUG_EVENT)
+							zlog_debug("GR %s: last route updated to re %p",
+								   __func__, z_gr_ctx.re);
+
+						frrtrace(2, frr_zebra, gr_last_route_re,
+							 trace_pfx_buf, 1);
+					}
 				}
-			} else {
-				route_unlock_node(z_gr_ctx.rn);
-				z_gr_ctx.re = NULL;
+			} else { /* (dest->selected_fib == z_gr_ctx.re) */
+				/*
+				 * If last re (which is same as the selected fib
+				 * route) is installed and not removed then
+				 * we're ok.
+				 */
+				if (!CHECK_FLAG(z_gr_ctx.re->status, ROUTE_ENTRY_REMOVED) &&
+				    CHECK_FLAG(z_gr_ctx.re->status, ROUTE_ENTRY_INSTALLED))
+					last_re_found = true;
 			}
-			frrtrace(2, frr_zebra, gr_last_route_re, trace_pfx_buf, 1);
 		}
 
-		if (z_gr_ctx.re) {
+		if (last_re_found) {
 			rib_install_kernel(z_gr_ctx.rn, z_gr_ctx.re, NULL, true);
-			route_unlock_node(z_gr_ctx.rn);
 
 			frrtrace(2, frr_zebra, gr_reinstalled_last_route,
 				 vrf_id_to_name(z_gr_ctx.re->vrf_id), trace_pfx_buf);
 		} else {
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("GR %s: last installed BGP route not found", __func__);
 			frrtrace(2, frr_zebra, gr_last_route_re, trace_pfx_buf, 2);
 		}
+		route_unlock_node(z_gr_ctx.rn);
 	} else {
 		zlog_info("GR %s Last route not found. rn %p, re %p", __func__, z_gr_ctx.rn,
 			  z_gr_ctx.re);
