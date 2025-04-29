@@ -2958,22 +2958,6 @@ static void process_subq_early_route_add(struct zebra_early_route *ere)
 			early_route_memory_free(ere);
 			return;
 		}
-		for (ALL_NEXTHOPS(nhe->nhg, tmp_nh)) {
-			if (CHECK_FLAG(tmp_nh->flags, NEXTHOP_FLAG_EVPN)) {
-				struct ipaddr vtep_ip = {};
-
-				if (ere->afi == AFI_IP) {
-					vtep_ip.ipa_type = IPADDR_V4;
-					vtep_ip.ipaddr_v4 = tmp_nh->gate.ipv4;
-				} else {
-					vtep_ip.ipa_type = IPADDR_V6;
-					vtep_ip.ipaddr_v6 = tmp_nh->gate.ipv6;
-				}
-				zebra_rib_queue_evpn_route_add(
-					re->vrf_id, &tmp_nh->rmac, &vtep_ip,
-					&ere->p);
-			}
-		}
 	}
 
 	/*
@@ -3318,31 +3302,6 @@ static void process_subq_early_route_delete(struct zebra_early_route *ere)
 
 			early_route_memory_free(ere);
 			return;
-		}
-
-		/* Special handling for IPv4 or IPv6 routes sourced from
-		 * EVPN - the nexthop (and associated MAC) need to be
-		 * uninstalled if no more refs.
-		 */
-		for (ALL_NEXTHOPS(re->nhe->nhg, tmp_nh)) {
-			struct ipaddr vtep_ip;
-
-			if (CHECK_FLAG(tmp_nh->flags, NEXTHOP_FLAG_EVPN)) {
-				memset(&vtep_ip, 0, sizeof(struct ipaddr));
-				if (ere->afi == AFI_IP) {
-					vtep_ip.ipa_type = IPADDR_V4;
-					memcpy(&(vtep_ip.ipaddr_v4),
-					       &(tmp_nh->gate.ipv4),
-					       sizeof(struct in_addr));
-				} else {
-					vtep_ip.ipa_type = IPADDR_V6;
-					memcpy(&(vtep_ip.ipaddr_v6),
-					       &(tmp_nh->gate.ipv6),
-					       sizeof(struct in6_addr));
-				}
-				// zebra_rib_queue_evpn_route_del(
-				//	re->vrf_id, &vtep_ip, &ere->p);
-			}
 		}
 
 		/* Notify dplane if system route changes */

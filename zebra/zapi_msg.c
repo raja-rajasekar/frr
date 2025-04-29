@@ -1599,9 +1599,6 @@ static struct nexthop *nexthop_from_zapi(const struct zapi_nexthop *api_nh,
 			&api_nh->gate.ipv4, NULL, api_nh->ifindex,
 			api_nh->vrf_id);
 
-		/* Special handling for IPv4 routes sourced from EVPN:
-		 * the nexthop and associated MAC need to be installed.
-		 */
 		if (CHECK_FLAG(api_nh->flags, ZAPI_NEXTHOP_FLAG_EVPN)) {
 			SET_FLAG(nexthop->flags, NEXTHOP_FLAG_EVPN);
 			nexthop->rmac = api_nh->rmac;
@@ -1628,9 +1625,6 @@ static struct nexthop *nexthop_from_zapi(const struct zapi_nexthop *api_nh,
 						    api_nh->ifindex,
 						    api_nh->vrf_id);
 
-		/* Special handling for IPv6 routes sourced from EVPN:
-		 * the nexthop and associated MAC need to be installed.
-		 */
 		if (CHECK_FLAG(api_nh->flags, ZAPI_NEXTHOP_FLAG_EVPN)) {
 			SET_FLAG(nexthop->flags, NEXTHOP_FLAG_EVPN);
 			nexthop->rmac = api_nh->rmac;
