@@ -8897,6 +8897,10 @@ static void bgp_stop_peer_threads_and_close(struct peer_connection *connection)
 {
 	struct peer *peer = connection->peer;
 
+	/* Unregister BFD session if present */
+	if (peer->bfd_config && peer->bfd_config->session)
+		bfd_sess_uninstall(peer->bfd_config->session);
+
 	/* Delete all existing events of the peer */
 	event_cancel_event_ready(bm->master, connection);
 
