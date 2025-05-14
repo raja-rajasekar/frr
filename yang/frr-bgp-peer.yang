@@ -87,6 +87,36 @@ module frr-bgp-peer {
             description
                 "Local Autonomous System Number";
           }
+          leaf peer-as {
+            config false;
+            type uint32;
+            description
+                "AS Number of BGP peer";
+          }
+          leaf last-established {
+            config false;
+            type uint64;
+            description
+                "Last Established Time";
+          }
+          leaf description{
+            config false;
+            type string;
+            description
+                "Description of peer";
+          }
+          leaf peer-group{
+            config false;
+            type string;
+            description
+                "Name of peer-group";
+          }
+          leaf peer-type{
+            config false;
+            type uint8;
+            description
+                "Type of peer";
+          }
           list afi-safi {
             config false;
             key "afi-safi-name";
