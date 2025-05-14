@@ -284,9 +284,21 @@ struct yang_data *lib_vrf_peer_total_msgs_recvd_get_elem(struct nb_cb_get_elem_a
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	return yang_data_new_uint32(args->xpath, PEER_TOTAL_RX(peer));
+	return yang_data_new_uint32(args->xpath, peer->local_as);
 }
 
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/local-as
+ *   */
+struct yang_data *
+lib_vrf_peer_local_as_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, PEER_TOTAL_RX(peer));
+}
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/afi-safi
  *   */
@@ -461,7 +473,13 @@ const struct frr_yang_module_info frr_bgp_peer_info = {
 				.get_elem = lib_vrf_peer_rx_updates_get_elem,
 			}
 		},
-                                {
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/local-as",
+			.cbs = {
+				.get_elem = lib_vrf_peer_local_as_get_elem,
+			}
+		},
+                {
                         .xpath = "/frr-bgp-peer:lib/vrf/peer/afi-safi",
                         .cbs = {
                                 .get_next = lib_vrf_peer_afi_safi_get_next,

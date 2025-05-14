@@ -81,6 +81,12 @@ module frr-bgp-peer {
             description
                "Messages Recieved";
           }
+          leaf local-as {
+            config false;
+            type uint32;
+            description
+                "Local Autonomous System Number";
+          }
           list afi-safi {
             config false;
             key "afi-safi-name";
