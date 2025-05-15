@@ -125,9 +125,22 @@ int lib_vrf_peer_get_keys(struct nb_cb_get_keys_args *args)
 					sizeof(args->keys->key[0]));
 			else if (peer->host)
 				strlcpy(args->keys->key[0], peer->host, sizeof(args->keys->key[0]));
-			else
-				strlcpy(args->keys->key[0], &peer->connection->su,
-					sizeof(args->keys->key[0]));
+			else {
+				char buf[INET6_ADDRSTRLEN];
+				if (peer->su.sa.sa_family == AF_INET) {
+					inet_ntop(AF_INET,
+						  &peer->su.sin.sin_addr, buf,
+						  sizeof(buf));
+					strlcpy(args->keys->key[0], buf,
+						sizeof(args->keys->key[0]));
+				} else if (peer->su.sa.sa_family == AF_INET6) {
+					if (inet_ntop(AF_INET6, &peer->su.sin6.sin6_addr, buf, INET6_ADDRSTRLEN) == NULL) {
+						return NB_ERR;
+					}
+					strlcpy(args->keys->key[0], buf,
+						sizeof(args->keys->key[0]));
+				}
+			}
 		}
 		DEBUGD(&nb_dbg_events, "Peer name %s", args->keys->key[0]);
 	}
@@ -315,24 +328,29 @@ lib_vrf_peer_as_get_elem(struct nb_cb_get_elem_args *args)
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/last-established
  *   */
 struct yang_data *
-lib_vrf_last_established_get_elem(struct nb_cb_get_elem_args *args)
+lib_vrf_peer_last_established_get_elem(struct nb_cb_get_elem_args *args)
 {
 	struct peer *peer;
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	return yang_data_new_uint64(args->xpath, peer->resettime);
+	char timebuf[MONOTIME_STRLEN];
+	time_to_string(peer->resettime, timebuf);
+	return yang_data_new_string(args->xpath, timebuf);
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/description
  *   */
 struct yang_data *
-lib_vrf_description_get_elem(struct nb_cb_get_elem_args *args)
+lib_vrf_peer_description_get_elem(struct nb_cb_get_elem_args *args)
 {
 	struct peer *peer;
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
+	if (peer->desc == NULL){
+		return NULL;
+	}
 	return yang_data_new_string(args->xpath, peer->desc);
 }
 
@@ -345,6 +363,9 @@ lib_vrf_peer_group_get_elem(struct nb_cb_get_elem_args *args){
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
+	if (peer->group == NULL){
+		return NULL;
+	}
 	return yang_data_new_string(args->xpath, peer->group->name);
 }
 
@@ -358,6 +379,26 @@ lib_vrf_peer_type_get_elem(struct nb_cb_get_elem_args *args){
 		return NULL;
 	peer = (struct peer *)args->list_entry;
 	return yang_data_new_uint8(args->xpath, peer->sort);
+}
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/neighbor-address
+ *   */
+struct yang_data *
+lib_vrf_peer_neighbor_address_get_elem(struct nb_cb_get_elem_args *args){
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (peer->su.sa.sa_family == AF_INET) {
+		return yang_data_new_string(args->xpath, inet_ntoa(peer->su.sin.sin_addr));
+	} else if (peer->su.sa.sa_family == AF_INET6) {
+		char addr_str[INET6_ADDRSTRLEN];
+		if (inet_ntop(AF_INET6, &peer->su.sin6.sin6_addr, addr_str, INET6_ADDRSTRLEN) == NULL) {
+			return NB_ERR;
+		}
+		return yang_data_new_string(args->xpath, addr_str);
+	}
+	return NULL;
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/afi-safi
@@ -548,13 +589,13 @@ const struct frr_yang_module_info frr_bgp_peer_info = {
 		{
 			.xpath = "/frr-bgp-peer:lib/vrf/peer/last-established",
 			.cbs = {
-				.get_elem = lib_vrf_last_established_get_elem,
+				.get_elem = lib_vrf_peer_last_established_get_elem,
 			}
 		},
 		{
 			.xpath = "/frr-bgp-peer:lib/vrf/peer/description",
 			.cbs = {
-				.get_elem = lib_vrf_description_get_elem,
+				.get_elem = lib_vrf_peer_description_get_elem,
 			}
 		},
 		{
@@ -567,6 +608,12 @@ const struct frr_yang_module_info frr_bgp_peer_info = {
 			.xpath = "/frr-bgp-peer:lib/vrf/peer/peer-type",
 			.cbs = {
 				.get_elem = lib_vrf_peer_type_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/neighbor-address",
+			.cbs = {
+				.get_elem = lib_vrf_peer_neighbor_address_get_elem,
 			}
 		},
                 {

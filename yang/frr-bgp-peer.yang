@@ -95,7 +95,7 @@ module frr-bgp-peer {
           }
           leaf last-established {
             config false;
-            type uint64;
+            type string;
             description
                 "Last Established Time";
           }
@@ -116,6 +116,12 @@ module frr-bgp-peer {
             type uint8;
             description
                 "Type of peer";
+          }
+          leaf neighbor-address{
+            config false;
+            type string;
+            description
+                "IP Address of BGP peer";
           }
           list afi-safi {
             config false;
