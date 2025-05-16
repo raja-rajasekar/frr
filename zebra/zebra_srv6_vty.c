@@ -334,6 +334,25 @@ static const char *show_srv6_sid_seg6_context(char *str, size_t size, const stru
 	return str;
 }
 
+static const char *get_sid_status(struct zebra_srv6_sid_ctx *sid_ctx)
+{
+	struct interface *ifp;
+
+	if (sid_ctx->ctx.behavior == ZEBRA_SEG6_LOCAL_ACTION_END_X) {
+		ifp = if_lookup_by_index(sid_ctx->ctx.ifindex, sid_ctx->ctx.vrf_id);
+		if (!ifp)
+			return "inactive";
+		if (if_is_vrf(ifp))
+			return "active";
+		return if_is_up(ifp) ? "active" : "inactive";
+	}
+	if (sid_ctx->ctx.behavior == ZEBRA_SEG6_LOCAL_ACTION_END) {
+		ifp = if_lookup_by_name("sr0", sid_ctx->ctx.vrf_id);
+		return (ifp && if_is_up(ifp)) ? "active" : "inactive";
+	}
+	return listcount(sid_ctx->sid->client_list) > 0 ? "active" : "inactive";
+}
+
 static void do_show_srv6_sid_line(struct ttable *tt, struct zebra_srv6_sid *sid)
 {
 	struct listnode *node;
@@ -392,8 +411,8 @@ static void do_show_srv6_sid_line(struct ttable *tt, struct zebra_srv6_sid *sid)
 	snprintf(alloc_mode_str, sizeof(alloc_mode_str), "%s",
 		 srv6_sid_alloc_mode2str(sid->alloc_mode));
 
-	ttable_add_row(tt, "%pI6|%s|%s|%s|%s|%s", &sid->value, behavior, ctx, clients, locator_name,
-		       alloc_mode_str);
+	ttable_add_row(tt, "%pI6|%s|%s|%s|%s|%s|%s", &sid->value, behavior, ctx, clients,
+		       locator_name, alloc_mode_str, get_sid_status(sid->ctx));
 }
 
 static void do_show_srv6_sid_json(struct vty *vty, json_object **json, struct srv6_locator *locator,
@@ -459,6 +478,7 @@ static void do_show_srv6_sid_json(struct vty *vty, json_object **json, struct sr
 	json_object_string_add(json_sid, "locator", sid_ctx->sid->locator->name);
 	json_object_string_add(json_sid, "allocationMode",
 			       srv6_sid_alloc_mode2str(sid_ctx->sid->alloc_mode));
+	json_object_string_add(json_sid, "status", get_sid_status(sid_ctx));
 
 	/* Zclients */
 	json_sid_clients = json_object_new_array();
@@ -489,7 +509,8 @@ static void do_show_srv6_sid_specific(struct vty *vty, json_object **json,
 		/* Prepare table. */
 		tt = ttable_new(&ttable_styles[TTSTYLE_BLANK]);
 
-		ttable_add_row(tt, "SID|Behavior|Context|Daemon/Instance|Locator|AllocationType");
+		ttable_add_row(tt,
+			       "SID|Behavior|Context|Daemon/Instance|Locator|AllocationType|Status");
 		tt->style.cell.rpad = 2;
 		tt->style.corner = ' ';
 		ttable_restyle(tt);
@@ -511,6 +532,8 @@ static void do_show_srv6_sid_specific(struct vty *vty, json_object **json,
 		ttable_colseps(tt, 4, LEFT, true, ' ');
 		ttable_colseps(tt, 4, RIGHT, true, ' ');
 		ttable_colseps(tt, 5, LEFT, true, ' ');
+		ttable_colseps(tt, 5, RIGHT, true, ' ');
+		ttable_colseps(tt, 6, LEFT, true, ' ');
 
 		/* Dump the generated table. */
 		if (tt->nrows > 1) {
@@ -546,7 +569,8 @@ static void do_show_srv6_sid_all(struct vty *vty, json_object **json, struct srv
 	} else {
 		/* Prepare table. */
 		tt = ttable_new(&ttable_styles[TTSTYLE_BLANK]);
-		ttable_add_row(tt, "SID|Behavior|Context|Daemon/Instance|Locator|AllocationType");
+		ttable_add_row(tt,
+			       "SID|Behavior|Context|Daemon/Instance|Locator|AllocationType|Status");
 		tt->style.cell.rpad = 2;
 		tt->style.corner = ' ';
 		ttable_restyle(tt);
@@ -572,6 +596,8 @@ static void do_show_srv6_sid_all(struct vty *vty, json_object **json, struct srv
 		ttable_colseps(tt, 4, LEFT, true, ' ');
 		ttable_colseps(tt, 4, RIGHT, true, ' ');
 		ttable_colseps(tt, 5, LEFT, true, ' ');
+		ttable_colseps(tt, 5, RIGHT, true, ' ');
+		ttable_colseps(tt, 6, LEFT, true, ' ');
 
 		/* Dump the generated table. */
 		if (tt->nrows > 1) {
