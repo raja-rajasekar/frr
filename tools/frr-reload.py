@@ -2302,6 +2302,40 @@ def caesar(encrypt, text, is_bgp):
 
     return result_string
 
+def should_deduplicate(ctx_keys, line):
+    """
+    Check if a command should be deduplicated based on its type.
+    Returns True for IP routes, IPv6 routes, IP mroute, and segment-routing commands.
+    """
+    is_segment_routing = any('segment-routing' in key for key in ctx_keys)
+    return (line and (line.startswith('ip route ') or
+                     line.startswith('ipv6 route ') or
+                     line.startswith('ip mroute ') or
+                     is_segment_routing)) or \
+           (line is None and (any('ip route' in key for key in ctx_keys) or
+                            any('ipv6 route' in key for key in ctx_keys) or
+                            any('ip mroute' in key for key in ctx_keys) or
+                            is_segment_routing))
+
+def deduplicate_lines(lines, seen=None):
+    """
+    Deduplicate a list of (ctx_keys, line) tuples.
+    Returns a new list with duplicates removed.
+    """
+    if seen is None:
+        seen = set()
+    deduped = []
+
+    for ctx_keys, line in lines:
+        if should_deduplicate(ctx_keys, line):
+            # For None lines, use just the context keys as the key
+            cmd_key = (ctx_keys, line) if line is not None else ctx_keys
+            if cmd_key not in seen:
+                seen.add(cmd_key)
+                deduped.append((ctx_keys, line))
+        else:
+            deduped.append((ctx_keys, line))
+    return deduped, seen
 
 if __name__ == "__main__":
     # Command line options
@@ -2627,9 +2661,34 @@ if __name__ == "__main__":
                 sys.exit(0)
 
             if x == 0:
-                lines_to_add_first_pass = lines_to_add
+                # Deduplicate entries in first pass
+                lines_to_add_first_pass, seen = deduplicate_lines(lines_to_add)
+                # Update lines_to_add with deduplicated entries
+                lines_to_add = lines_to_add_first_pass
             else:
-                lines_to_add.extend(lines_to_add_first_pass)
+                # Deduplicate entries in second pass before filtering
+                deduped_lines, seen = deduplicate_lines(lines_to_add)
+                lines_to_add = deduped_lines
+
+                # Track which commands we've already added in the first pass
+                first_pass_commands = set()
+                for ctx_keys, line in lines_to_add_first_pass:
+                    if should_deduplicate(ctx_keys, line):
+                        cmd_key = (ctx_keys, line)
+                        first_pass_commands.add(cmd_key)
+
+                # Only add second pass lines that weren't in the first pass
+                new_lines_to_add = []
+                seen_second_pass = set()
+                for ctx_keys, line in lines_to_add:
+                    if should_deduplicate(ctx_keys, line):
+                        cmd_key = (ctx_keys, line)
+                        if cmd_key not in first_pass_commands and cmd_key not in seen_second_pass:
+                            seen_second_pass.add(cmd_key)
+                            new_lines_to_add.append((ctx_keys, line))
+                    else:
+                        new_lines_to_add.append((ctx_keys, line))
+                lines_to_add = new_lines_to_add
 
             # Only do deletes on the first pass. The reason being if we
             # configure a bgp neighbor via "neighbor swp1 interface" FRR
