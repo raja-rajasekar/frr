@@ -20747,10 +20747,10 @@ static void show_bgp_soo_entry_vty_brief_header(struct vty *vty)
 	vty_out(vty,
 		"Site-of-Origin route flag: I - Installed, NhgRouteCnt - Number of routes using\n");
 	vty_out(vty, "SoO NHG, NhgFlag - V - valid, Ip - install-pending, Dp - delete-pending\n\n");
-	vty_out(vty, "%-22s  %-7s  %-8s  %-8s  %-12s  %-11s  %s\n", "SoORouteID", "PathCnt",
+	vty_out(vty, "%-15s  %-7s  %-8s  %-8s  %-12s  %-11s  %s\n", "SoORouteID", "PathCnt",
 		"RouteCnt", "SoONhgID", "SoORouteFlag", "NhgRouteCnt", "NhgFlag");
-	vty_out(vty, "%-22s  %-7s  %-8s  %-8s  %-12s  %-11s  %s\n", "----------------------",
-		"-------", "--------", "--------", "------------", "-----------", "-------");
+	vty_out(vty, "%-15s  %-7s  %-8s  %-8s  %-12s  %-11s  %s\n", "----------", "-------",
+		"--------", "--------", "------------", "-----------", "-------");
 }
 
 static void show_bgp_soo_entry_vty_brief(struct bgp_per_src_nhg_hash_entry *soo_entry,
@@ -20775,7 +20775,7 @@ static void show_bgp_soo_entry_vty_brief(struct bgp_per_src_nhg_hash_entry *soo_
 
 	// SoORouteID  PathCnt  RouteCnt  SoONhgID  SoORouteFlag  NhgRouteCnt
 	// NhgFlag
-	vty_out(vty, "%-22s  %-7d  %-8ld  %-8d  %-12s  %-11d  %s\n", addrbuf, soo_entry->refcnt,
+	vty_out(vty, "%-15s  %-7d  %-8ld  %-8d  %-12s  %-11d  %s\n", addrbuf, soo_entry->refcnt,
 		soo_entry->route_with_soo_table->count, soo_entry->nhg_id, flag_str,
 		soo_entry->route_with_soo_use_nhid_cnt, nhg_flags);
 }
