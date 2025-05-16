@@ -1673,6 +1673,9 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 						 SEG6_LOCAL_NH6, &ctx->nh6,
 						 sizeof(struct in6_addr)))
 					return false;
+				if (!nl_attr_put32(nlmsg, req_size, SEG6_LOCAL_OIF,
+						   nexthop->ifindex))
+					return false;
 				break;
 			case ZEBRA_SEG6_LOCAL_ACTION_END_T:
 				if (!nl_attr_put32(nlmsg, req_size,
@@ -1702,6 +1705,9 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 				if (!nl_attr_put(nlmsg, req_size,
 						 SEG6_LOCAL_NH6, &ctx->nh6,
 						 sizeof(struct in6_addr)))
+					return false;
+				if (!nl_attr_put32(nlmsg, req_size, SEG6_LOCAL_OIF,
+						   nexthop->ifindex))
 					return false;
 				break;
 			case ZEBRA_SEG6_LOCAL_ACTION_END_DT6:
@@ -2972,6 +2978,9 @@ ssize_t netlink_nexthop_msg_encode(uint16_t cmd,
 						    SEG6_LOCAL_NH6, &ctx->nh6,
 						    sizeof(struct in6_addr)))
 							return 0;
+						if (!nl_attr_put32(&req->n, buflen, SEG6_LOCAL_OIF,
+								   nh->ifindex))
+							return 0;
 						break;
 					case SEG6_LOCAL_ACTION_END_T:
 						if (!nl_attr_put32(
@@ -3007,6 +3016,9 @@ ssize_t netlink_nexthop_msg_encode(uint16_t cmd,
 								 SEG6_LOCAL_NH6,
 								 &ctx->nh6,
 								 sizeof(struct in6_addr)))
+							return 0;
+						if (!nl_attr_put32(&req->n, buflen, SEG6_LOCAL_OIF,
+								   nh->ifindex))
 							return 0;
 						break;
 					case SEG6_LOCAL_ACTION_END_DT6:
