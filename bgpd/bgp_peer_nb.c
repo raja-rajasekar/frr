@@ -127,14 +127,14 @@ int lib_vrf_peer_get_keys(struct nb_cb_get_keys_args *args)
 				strlcpy(args->keys->key[0], peer->host, sizeof(args->keys->key[0]));
 			else {
 				char buf[INET6_ADDRSTRLEN];
-				if (peer->su.sa.sa_family == AF_INET) {
+				if (peer->connection->su.sa.sa_family == AF_INET) {
 					inet_ntop(AF_INET,
-						  &peer->su.sin.sin_addr, buf,
+						  &peer->connection->su.sin.sin_addr, buf,
 						  sizeof(buf));
 					strlcpy(args->keys->key[0], buf,
 						sizeof(args->keys->key[0]));
-				} else if (peer->su.sa.sa_family == AF_INET6) {
-					if (inet_ntop(AF_INET6, &peer->su.sin6.sin6_addr, buf, INET6_ADDRSTRLEN) == NULL) {
+				} else if (peer->connection->su.sa.sa_family == AF_INET6) {
+					if (inet_ntop(AF_INET6, &peer->connection->su.sin6.sin6_addr, buf, INET6_ADDRSTRLEN) == NULL) {
 						return NB_ERR;
 					}
 					strlcpy(args->keys->key[0], buf,
@@ -393,11 +393,11 @@ lib_vrf_peer_neighbor_address_get_elem(struct nb_cb_get_elem_args *args){
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	if (peer->su.sa.sa_family == AF_INET) {
-		return yang_data_new_string(args->xpath, inet_ntoa(peer->su.sin.sin_addr));
-	} else if (peer->su.sa.sa_family == AF_INET6) {
+	if (peer->connection->su.sa.sa_family == AF_INET) {
+		return yang_data_new_string(args->xpath, inet_ntoa(peer->connection->su.sin.sin_addr));
+	} else if (peer->connection->su.sa.sa_family == AF_INET6) {
 		char addr_str[INET6_ADDRSTRLEN];
-		if (inet_ntop(AF_INET6, &peer->su.sin6.sin6_addr, addr_str, INET6_ADDRSTRLEN) == NULL) {
+		if (inet_ntop(AF_INET6, &peer->connection->su.sin6.sin6_addr, addr_str, INET6_ADDRSTRLEN) == NULL) {
 			return NULL;
 		}
 		return yang_data_new_string(args->xpath, addr_str);
