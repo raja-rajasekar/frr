@@ -334,8 +334,12 @@ lib_vrf_peer_last_established_get_elem(struct nb_cb_get_elem_args *args)
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	char timebuf[MONOTIME_STRLEN];
+	char timebuf[MONOTIME_STRLEN] = {'\0'};
 	time_to_string(peer->resettime, timebuf);
+	// Remove the newline character that ctime_r adds
+	char *newline = strchr(timebuf, '\n');
+	if (newline)
+		*newline = '\0';
 	return yang_data_new_string(args->xpath, timebuf);
 }
 /*
@@ -378,7 +382,7 @@ lib_vrf_peer_type_get_elem(struct nb_cb_get_elem_args *args){
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	return yang_data_new_uint8(args->xpath, peer->sort);
+	return yang_data_new_string(args->xpath, get_peer_type_str(peer));
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/neighbor-address
@@ -394,11 +398,27 @@ lib_vrf_peer_neighbor_address_get_elem(struct nb_cb_get_elem_args *args){
 	} else if (peer->su.sa.sa_family == AF_INET6) {
 		char addr_str[INET6_ADDRSTRLEN];
 		if (inet_ntop(AF_INET6, &peer->su.sin6.sin6_addr, addr_str, INET6_ADDRSTRLEN) == NULL) {
-			return NB_ERR;
+			return NULL;
 		}
 		return yang_data_new_string(args->xpath, addr_str);
 	}
 	return NULL;
+}
+
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/last-notification-error-code
+ *   */
+struct yang_data *
+lib_vrf_peer_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *args){
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (!peer->notify.code)
+		return NULL;
+	return yang_data_new_string(
+			args->xpath,
+			lookup_msg(bgp_status_msg, peer->notify.code, NULL));
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/afi-safi
@@ -614,6 +634,12 @@ const struct frr_yang_module_info frr_bgp_peer_info = {
 			.xpath = "/frr-bgp-peer:lib/vrf/peer/neighbor-address",
 			.cbs = {
 				.get_elem = lib_vrf_peer_neighbor_address_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/last-notification-error-code",
+			.cbs = {
+				.get_elem = lib_vrf_peer_last_notification_error_code_get_elem,
 			}
 		},
                 {

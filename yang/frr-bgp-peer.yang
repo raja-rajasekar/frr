@@ -113,7 +113,7 @@ module frr-bgp-peer {
           }
           leaf peer-type{
             config false;
-            type uint8;
+            type string;
             description
                 "Type of peer";
           }
@@ -122,6 +122,12 @@ module frr-bgp-peer {
             type string;
             description
                 "IP Address of BGP peer";
+          }
+          leaf last-notification-error-code{
+            config false;
+            type string;
+            description
+                "Error sent or received on peering session";
           }
           list afi-safi {
             config false;
