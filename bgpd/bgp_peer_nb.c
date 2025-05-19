@@ -414,11 +414,9 @@ lib_vrf_peer_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *a
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	if (!peer->notify.code)
+	if (!(peer->notify.code))
 		return NULL;
-	return yang_data_new_string(
-			args->xpath,
-			lookup_msg(bgp_status_msg, peer->notify.code, NULL));
+	return yang_data_new_uint32(args->xpath, peer->notify.code);
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/afi-safi

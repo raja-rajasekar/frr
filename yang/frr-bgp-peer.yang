@@ -125,7 +125,7 @@ module frr-bgp-peer {
           }
           leaf last-notification-error-code{
             config false;
-            type string;
+            type uint32;
             description
                 "Error sent or received on peering session";
           }

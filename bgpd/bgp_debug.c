@@ -110,7 +110,7 @@ const char *const bgp_type_str[] = {NULL,	   "OPEN",      "UPDATE",
 			      "CAPABILITY"};
 
 /* message for BGP-4 Notify */
-static const struct message bgp_notify_msg[] = {
+const struct message bgp_notify_msg[] = {
 	{BGP_NOTIFY_HEADER_ERR, "Message Header Error"},
 	{BGP_NOTIFY_OPEN_ERR, "OPEN Message Error"},
 	{BGP_NOTIFY_UPDATE_ERR, "UPDATE Message Error"},
