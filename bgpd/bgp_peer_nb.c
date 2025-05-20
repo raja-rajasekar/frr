@@ -334,13 +334,7 @@ lib_vrf_peer_last_established_get_elem(struct nb_cb_get_elem_args *args)
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	char timebuf[MONOTIME_STRLEN] = {'\0'};
-	time_to_string(peer->resettime, timebuf);
-	// Remove the newline character that ctime_r adds
-	char *newline = strchr(timebuf, '\n');
-	if (newline)
-		*newline = '\0';
-	return yang_data_new_string(args->xpath, timebuf);
+	return yang_data_new_uint64(args->xpath, time_to_epoch(peer->resettime));
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/description
@@ -414,8 +408,8 @@ lib_vrf_peer_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *a
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	if (!(peer->notify.code))
-		return NULL;
+	if (!peer->notify.code)
+		return yang_data_new_uint32(args->xpath, 0);
 	return yang_data_new_uint32(args->xpath, peer->notify.code);
 }
 /*

@@ -2676,18 +2676,12 @@ static inline void bgp_unlock(struct bgp *bgp)
 static inline const char *get_peer_type_str(struct peer *peer)
 {
 	switch (peer->sort) {
-	case BGP_PEER_UNSPECIFIED:
-		return "unspecified";
 	case BGP_PEER_IBGP:
-		return "ibgp";
+		return "INTERNAL";
 	case BGP_PEER_EBGP:
-		return "ebgp";
-	case BGP_PEER_INTERNAL:
-		return "internal";
-	case BGP_PEER_CONFED:
-		return "confed";
+		return "EXTERNAL";
 	default:
-		return "unknown";
+		return "UNKNOWN";
 	}
 }
 

@@ -95,7 +95,7 @@ module frr-bgp-peer {
           }
           leaf last-established {
             config false;
-            type string;
+            type uint64;
             description
                 "Last Established Time";
           }
