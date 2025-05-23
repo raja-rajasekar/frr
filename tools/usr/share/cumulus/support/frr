@@ -78,6 +78,7 @@ func_frr()
     exec_cmd zebra.mpls_table vtysh -c "show mpls table"
     exec_cmd zebra.mpls_fec vtysh -c "show mpls fec"
     exec_cmd zebra.nhg vtysh -c "show nexthop-group rib"
+    exec_cmd $jexec zebra.srv6.sid vtysh -c "show segment-routing srv6 sid $json"
 
     exec_cmd $jexec pim.upstream vtysh -c "show ip pim vrf all upstream $json"
     exec_cmd $jexec pim.join vtysh -c "show ip pim vrf all join $json"

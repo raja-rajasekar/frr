@@ -271,7 +271,9 @@ ctx_keywords = {
     },
     "router rip": {},
     "router ripng": {},
-    "router isis ": {},
+    "router isis ": {
+        "segment-routing srv6": {},
+    },
     "router openfabric ": {},
     "router ospf": {},
     "router ospf6": {},
@@ -289,7 +291,12 @@ ctx_keywords = {
             "policy ": {"candidate-path ": {}},
             "pcep": {"pcc": {}, "pce ": {}, "pce-config ": {}},
         },
-        "srv6": {"locators": {"locator ": {}}},
+        "srv6": {
+            "locators": {"locator ": {}},
+            "static-sids": {},
+            "encapsulation": {},
+            "formats": {"format": {}},
+        },
     },
     "nexthop-group ": {},
     "route-map ": {},
@@ -1880,6 +1887,7 @@ def ignore_unconfigurable_lines(lines_to_add, lines_to_del):
     those commands from lines_to_del.
     """
     lines_to_del_to_del = []
+    lines_to_del_to_add = []
 
     for ctx_keys, line in lines_to_del:
         # The integrated-vtysh-config one is technically "no"able but if we did
@@ -1902,9 +1910,30 @@ def ignore_unconfigurable_lines(lines_to_add, lines_to_del):
         ):
             log.info('"%s" cannot be removed' % (ctx_keys[-1],))
             lines_to_del_to_del.append((ctx_keys, line))
+        # Handle segment-routing srv6 locators and formats commands
+        #  - Ignore "no formats" and "no locators" command
+        #  - replace "no prefix" under locator XYZ as "no locator XYZ"
+        elif (
+            len(ctx_keys) > 2
+            and ctx_keys[0].startswith("segment-routing")
+            and ctx_keys[1].startswith("srv6")
+            and ctx_keys[2] in {"locators", "formats"}
+        ):
+            is_top_level = len(ctx_keys) == 3 and not line
+            if ctx_keys[2] == "formats" and is_top_level:
+                lines_to_del_to_del.append((ctx_keys, line))
+            elif ctx_keys[2] == "locators":
+                if is_top_level:
+                    lines_to_del_to_del.append((ctx_keys, line))
+                elif len(ctx_keys) == 4 and line and line.startswith("prefix "):
+                    lines_to_del_to_del.append((ctx_keys, line))
+                    lines_to_del_to_add.append((ctx_keys[:-1] + (ctx_keys[-1],), None))
 
     for ctx_keys, line in lines_to_del_to_del:
         lines_to_del.remove((ctx_keys, line))
+
+    for ctx_keys, line in lines_to_del_to_add:
+        lines_to_del.append((ctx_keys, line))
 
     return (lines_to_add, lines_to_del)
 
@@ -2273,6 +2302,40 @@ def caesar(encrypt, text, is_bgp):
 
     return result_string
 
+def should_deduplicate(ctx_keys, line):
+    """
+    Check if a command should be deduplicated based on its type.
+    Returns True for IP routes, IPv6 routes, IP mroute, and segment-routing commands.
+    """
+    is_segment_routing = any('segment-routing' in key for key in ctx_keys)
+    return (line and (line.startswith('ip route ') or
+                     line.startswith('ipv6 route ') or
+                     line.startswith('ip mroute ') or
+                     is_segment_routing)) or \
+           (line is None and (any('ip route' in key for key in ctx_keys) or
+                            any('ipv6 route' in key for key in ctx_keys) or
+                            any('ip mroute' in key for key in ctx_keys) or
+                            is_segment_routing))
+
+def deduplicate_lines(lines, seen=None):
+    """
+    Deduplicate a list of (ctx_keys, line) tuples.
+    Returns a new list with duplicates removed.
+    """
+    if seen is None:
+        seen = set()
+    deduped = []
+
+    for ctx_keys, line in lines:
+        if should_deduplicate(ctx_keys, line):
+            # For None lines, use just the context keys as the key
+            cmd_key = (ctx_keys, line) if line is not None else ctx_keys
+            if cmd_key not in seen:
+                seen.add(cmd_key)
+                deduped.append((ctx_keys, line))
+        else:
+            deduped.append((ctx_keys, line))
+    return deduped, seen
 
 if __name__ == "__main__":
     # Command line options
@@ -2598,9 +2661,34 @@ if __name__ == "__main__":
                 sys.exit(0)
 
             if x == 0:
-                lines_to_add_first_pass = lines_to_add
+                # Deduplicate entries in first pass
+                lines_to_add_first_pass, seen = deduplicate_lines(lines_to_add)
+                # Update lines_to_add with deduplicated entries
+                lines_to_add = lines_to_add_first_pass
             else:
-                lines_to_add.extend(lines_to_add_first_pass)
+                # Deduplicate entries in second pass before filtering
+                deduped_lines, seen = deduplicate_lines(lines_to_add)
+                lines_to_add = deduped_lines
+
+                # Track which commands we've already added in the first pass
+                first_pass_commands = set()
+                for ctx_keys, line in lines_to_add_first_pass:
+                    if should_deduplicate(ctx_keys, line):
+                        cmd_key = (ctx_keys, line)
+                        first_pass_commands.add(cmd_key)
+
+                # Only add second pass lines that weren't in the first pass
+                new_lines_to_add = []
+                seen_second_pass = set()
+                for ctx_keys, line in lines_to_add:
+                    if should_deduplicate(ctx_keys, line):
+                        cmd_key = (ctx_keys, line)
+                        if cmd_key not in first_pass_commands and cmd_key not in seen_second_pass:
+                            seen_second_pass.add(cmd_key)
+                            new_lines_to_add.append((ctx_keys, line))
+                    else:
+                        new_lines_to_add.append((ctx_keys, line))
+                lines_to_add = new_lines_to_add
 
             # Only do deletes on the first pass. The reason being if we
             # configure a bgp neighbor via "neighbor swp1 interface" FRR

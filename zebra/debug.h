@@ -67,6 +67,8 @@ extern "C" {
 
 #define ZEBRA_DEBUG_TC 0x01
 
+#define ZEBRA_DEBUG_SRV6 0x01
+
 /* Debug related macro. */
 #define IS_ZEBRA_DEBUG_EVENT  (zebra_debug_event & ZEBRA_DEBUG_EVENT)
 
@@ -131,6 +133,8 @@ extern "C" {
 
 #define IS_ZEBRA_DEBUG_TC (zebra_debug_tc & ZEBRA_DEBUG_TC)
 
+#define IS_ZEBRA_DEBUG_SRV6 (zebra_debug_srv6 & ZEBRA_DEBUG_SRV6)
+
 extern unsigned long zebra_debug_event;
 extern unsigned long zebra_debug_packet;
 extern unsigned long zebra_debug_kernel;
@@ -149,6 +153,7 @@ extern unsigned long zebra_debug_pbr;
 extern unsigned long zebra_debug_neigh;
 extern unsigned long zebra_debug_tc;
 extern unsigned long zebra_debug_csm;
+extern unsigned long zebra_debug_srv6;
 
 extern void zebra_debug_init(void);
 

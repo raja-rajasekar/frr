@@ -1339,6 +1339,63 @@ def parse_frr_bgp_per_src_nhg_peer_clear_route(event):
 
 ############################ bgp per src nhg - end *#############################
 
+def bytes_to_ipv6(byte_list):
+    """
+    Converts a list of 16 bytes into a compressed IPv6 address string.
+
+    Args:
+        byte_list (list of int): A list of 16 integers between 0 and 255.
+
+    Returns:
+        str: IPv6 address in compressed string format.
+
+    Raises:
+        ValueError: If input is not 16 bytes or contains invalid values.
+    """
+    if len(byte_list) != 16:
+        raise ValueError("Input must be a list of 16 bytes.")
+    if not all(0 <= b <= 255 for b in byte_list):
+        raise ValueError("Each byte must be between 0 and 255.")
+
+    ipv6_bytes = bytes(byte_list)
+    ipv6_addr = ipaddress.IPv6Address(ipv6_bytes)
+    return str(ipv6_addr)
+
+def parse_frr_zebra_release_srv6_sid(event):
+    """
+    Parse the release_srv6_sid trace event
+    """
+    field_parsers = {"sid_value": bytes_to_ipv6}
+    parse_event(event, field_parsers)
+
+def parse_frr_zebra_release_srv6_sid_func_explicit(event):
+    """
+    Parse the release_srv6_sid_func_explicit trace event
+    """
+    field_parsers = {"block_prefix": print_prefix_addr}
+    parse_event(event, field_parsers)
+
+def parse_frr_zebra_srv6_manager_get_sid_internal(event):
+    """
+    Parse the srv6_manager_get_sid_internal trace event
+    """
+    field_parsers = {"sid_value": bytes_to_ipv6}
+    parse_event(event, field_parsers)
+
+def parse_frr_zebra_get_srv6_sid(event):
+    """
+    Parse the get_srv6_sid trace event
+    """
+    field_parsers = {"sid_value": bytes_to_ipv6}
+    parse_event(event, field_parsers)
+
+def parse_frr_zebra_get_srv6_sid_explicit(event):
+    """
+    Parse the get_srv6_sid_explicit trace event
+    """
+    field_parsers = {"sid_value": bytes_to_ipv6}
+    parse_event(event, field_parsers)
+
 def main():
     """
     FRR lttng trace output parser; babel trace plugin
@@ -1511,6 +1568,16 @@ def main():
                      parse_frr_zebra_interface_nhg_reinstall,
                      "frr_zebra:zebra_nhg_install_kernel":
                      parse_frr_zebra_nhg_install,
+                     "frr_zebra:release_srv6_sid":
+                     parse_frr_zebra_release_srv6_sid,
+                     "frr_zebra:release_srv6_sid_func_explicit":
+                     parse_frr_zebra_release_srv6_sid_func_explicit,
+                     "frr_zebra:srv6_manager_get_sid_internal":
+                     parse_frr_zebra_srv6_manager_get_sid_internal,
+                     "frr_zebra:get_srv6_sid":
+                     parse_frr_zebra_get_srv6_sid,
+                     "frr_zebra:get_srv6_sid_explicit":
+                     parse_frr_zebra_get_srv6_sid_explicit,
 }
 
     # get the trace path from the first command line argument

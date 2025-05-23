@@ -85,14 +85,12 @@ enum node_type {
 	CONFIG_NODE,		 /* Config node. Default mode of config file. */
 	PREFIX_NODE, /* ip prefix-list node. */
 	PREFIX_IPV6_NODE, /* ipv6 prefix-list node. */
+	LIB_DEBUG_NODE,		 /* frrlib debug node. */
 	DEBUG_NODE,		 /* Debug node. */
 	VRF_DEBUG_NODE,		 /* Vrf Debug node. */
-	NORTHBOUND_DEBUG_NODE,	 /* Northbound Debug node. */
 	DEBUG_VNC_NODE,		 /* Debug VNC node. */
 	RMAP_DEBUG_NODE,         /* Route-map debug node */
 	RESOLVER_DEBUG_NODE,	 /* Resolver debug node */
-	MGMT_BE_DEBUG_NODE,	 /* mgmtd backend-client debug node */
-	MGMT_FE_DEBUG_NODE,	 /* mgmtd frontend-client debug node */
 	AAA_NODE,		 /* AAA node. */
 	EXTLOG_NODE,		 /* RFC5424 & co. extended syslog */
 	KEYCHAIN_NODE,		 /* Key-chain node. */
@@ -159,9 +157,13 @@ enum node_type {
 	PCEP_PCE_NODE,		 /* PCE configuration node */
 	PCEP_PCC_NODE,		 /* PCC configuration node */
 	SRV6_NODE,		 /* SRv6 node */
+	SRV6_SIDS_NODE,		 /* SRv6 SIDs node */
 	SRV6_LOCS_NODE,		 /* SRv6 locators node */
 	SRV6_LOC_NODE,		 /* SRv6 locator node */
 	SRV6_ENCAP_NODE,		 /* SRv6 encapsulation node */
+	SRV6_SID_FORMATS_NODE,		 /* SRv6 SID formats config node */
+	SRV6_SID_FORMAT_USID_F3216_NODE,		 /* SRv6 uSID f3216 format config node */
+	SRV6_SID_FORMAT_UNCOMPRESSED_F4024_NODE,		 /* SRv6 uncompressed f4024 format config node */
 	VTY_NODE,		 /* Vty node. */
 	FPM_NODE,		 /* Dataplane FPM node. */
 	LINK_PARAMS_NODE,	/* Link-parameters node */

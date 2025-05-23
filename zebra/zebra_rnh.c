@@ -1269,6 +1269,8 @@ void show_nexthop_json_helper(json_object *json_nexthop, const struct nexthop *n
 	json_object *json_labels = NULL;
 	json_object *json_backups = NULL;
 	json_object *json_seg6local = NULL;
+	json_object *json_seg6local_context = NULL;
+	json_object *json_srv6_sid_structure = NULL;
 	json_object *json_seg6 = NULL;
 	json_object *json_segs = NULL;
 	int i;
@@ -1430,12 +1432,22 @@ void show_nexthop_json_helper(json_object *json_nexthop, const struct nexthop *n
 
 	if (nexthop->nh_srv6) {
 		json_seg6local = json_object_new_object();
-		json_object_string_add(
-			json_seg6local, "action",
-			seg6local_action2str(
-				nexthop->nh_srv6->seg6local_action));
+		json_object_string_add(json_seg6local, "action",
+				       seg6local_action2str_with_next_csid(
+					       nexthop->nh_srv6->seg6local_action,
+					       seg6local_has_next_csid(
+						       &nexthop->nh_srv6->seg6local_ctx)));
+		json_seg6local_context = json_object_new_object();
 		json_object_object_add(json_nexthop, "seg6local",
 				       json_seg6local);
+		seg6local_context2json(&nexthop->nh_srv6->seg6local_ctx,
+				       nexthop->nh_srv6->seg6local_action, json_seg6local_context);
+		json_object_object_add(json_nexthop, "seg6localContext", json_seg6local_context);
+
+		json_srv6_sid_structure = json_object_new_object();
+		srv6_sid_structure2json(&nexthop->nh_srv6->seg6local_ctx, json_srv6_sid_structure);
+		json_object_object_add(json_seg6local, "sidStructure", json_srv6_sid_structure);
+
 		if (nexthop->nh_srv6->seg6_segs &&
 		    nexthop->nh_srv6->seg6_segs->num_segs == 1) {
 			json_seg6 = json_object_new_object();
@@ -1567,10 +1579,12 @@ void show_route_nexthop_helper(struct vty *vty, const struct route_entry *re,
 				      nexthop->nh_srv6->seg6local_action);
 		if (nexthop->nh_srv6->seg6local_action !=
 		    ZEBRA_SEG6_LOCAL_ACTION_UNSPEC)
-			vty_out(vty, ", seg6local %s %s",
-				seg6local_action2str(
-					nexthop->nh_srv6->seg6local_action),
-				buf);
+			vty_out(vty, ", seg6local %s%s%s",
+				seg6local_action2str_with_next_csid(nexthop->nh_srv6->seg6local_action,
+								    seg6local_has_next_csid(
+									    &nexthop->nh_srv6
+										     ->seg6local_ctx)),
+				buf[0] == '\0' ? "" : " ", buf);
 		if (nexthop->nh_srv6->seg6_segs &&
 		    IPV6_ADDR_CMP(&nexthop->nh_srv6->seg6_segs->seg[0],
 				  &in6addr_any)) {

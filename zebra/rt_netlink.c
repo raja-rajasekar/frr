@@ -1069,6 +1069,12 @@ int netlink_route_change_read_unicast_internal(struct nlmsghdr *h,
 				rib_delete(afi, SAFI_UNICAST, vrf_id, proto, 0,
 					   flags, &p, &src_p, &nh, 0, table,
 					   metric, distance, true);
+
+				if (nh.nh_label)
+					nexthop_del_labels(&nh);
+
+				if (nh.nh_srv6)
+					nexthop_del_srv6_seg6(&nh);
 			} else {
 				/* XXX: need to compare the entire list of
 				 * nexthops here for NLM_F_APPEND stupidity */
@@ -1555,7 +1561,7 @@ static ssize_t fill_seg6ipt_encap(char *buffer, size_t buflen,
 	srh->first_segment = segs->num_segs - 1;
 
 	for (i = 0; i < segs->num_segs; i++) {
-		memcpy(&srh->segments[i], &segs->seg[i],
+		memcpy(&srh->segments[segs->num_segs - i - 1], &segs->seg[i],
 		       sizeof(struct in6_addr));
 	}
 
@@ -1667,6 +1673,9 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 						 SEG6_LOCAL_NH6, &ctx->nh6,
 						 sizeof(struct in6_addr)))
 					return false;
+				if (!nl_attr_put32(nlmsg, req_size, SEG6_LOCAL_OIF,
+						   nexthop->ifindex))
+					return false;
 				break;
 			case ZEBRA_SEG6_LOCAL_ACTION_END_T:
 				if (!nl_attr_put32(nlmsg, req_size,
@@ -1686,6 +1695,19 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 				if (!nl_attr_put(nlmsg, req_size,
 						 SEG6_LOCAL_NH4, &ctx->nh4,
 						 sizeof(struct in_addr)))
+					return false;
+				break;
+			case ZEBRA_SEG6_LOCAL_ACTION_END_DX6:
+				if (!nl_attr_put32(nlmsg, req_size,
+						   SEG6_LOCAL_ACTION,
+						   SEG6_LOCAL_ACTION_END_DX6))
+					return false;
+				if (!nl_attr_put(nlmsg, req_size,
+						 SEG6_LOCAL_NH6, &ctx->nh6,
+						 sizeof(struct in6_addr)))
+					return false;
+				if (!nl_attr_put32(nlmsg, req_size, SEG6_LOCAL_OIF,
+						   nexthop->ifindex))
 					return false;
 				break;
 			case ZEBRA_SEG6_LOCAL_ACTION_END_DT6:
@@ -1719,7 +1741,6 @@ static bool _netlink_route_build_singlepath(const struct prefix *p,
 					return false;
 				break;
 			case ZEBRA_SEG6_LOCAL_ACTION_END_DX2:
-			case ZEBRA_SEG6_LOCAL_ACTION_END_DX6:
 			case ZEBRA_SEG6_LOCAL_ACTION_END_B6:
 			case ZEBRA_SEG6_LOCAL_ACTION_END_B6_ENCAP:
 			case ZEBRA_SEG6_LOCAL_ACTION_END_BM:
@@ -2957,6 +2978,9 @@ ssize_t netlink_nexthop_msg_encode(uint16_t cmd,
 						    SEG6_LOCAL_NH6, &ctx->nh6,
 						    sizeof(struct in6_addr)))
 							return 0;
+						if (!nl_attr_put32(&req->n, buflen, SEG6_LOCAL_OIF,
+								   nh->ifindex))
+							return 0;
 						break;
 					case SEG6_LOCAL_ACTION_END_T:
 						if (!nl_attr_put32(
@@ -2980,6 +3004,21 @@ ssize_t netlink_nexthop_msg_encode(uint16_t cmd,
 						    &req->n, buflen,
 						    SEG6_LOCAL_NH4, &ctx->nh4,
 						    sizeof(struct in_addr)))
+							return 0;
+						break;
+					case SEG6_LOCAL_ACTION_END_DX6:
+						if (!nl_attr_put32(&req->n,
+								   buflen,
+								   SEG6_LOCAL_ACTION,
+								   SEG6_LOCAL_ACTION_END_DX6))
+							return 0;
+						if (!nl_attr_put(&req->n, buflen,
+								 SEG6_LOCAL_NH6,
+								 &ctx->nh6,
+								 sizeof(struct in6_addr)))
+							return 0;
+						if (!nl_attr_put32(&req->n, buflen, SEG6_LOCAL_OIF,
+								   nh->ifindex))
 							return 0;
 						break;
 					case SEG6_LOCAL_ACTION_END_DT6:
