@@ -782,6 +782,13 @@ static void zl3vni_print(struct zebra_l3vni *zl3vni, void **ctx)
 			zl3vni_sysmac2str(zl3vni, buf, sizeof(buf)));
 		vty_out(vty, "  Router MAC: %s\n",
 			zl3vni_rmac2str(zl3vni, buf, sizeof(buf)));
+		vty_out(vty,
+			"  Number of MACs (local and remote) known for this VNI: %u\n",
+			hashcount(zl3vni->rmac_table));
+		vty_out(vty,
+			"  Number of ARPs (IPv4 and IPv6, local and remote) "
+			"known for this VNI: %u\n",
+			hashcount(zl3vni->nh_table));
 		vty_out(vty, "  L2 VNIs: ");
 		for (ALL_LIST_ELEMENTS(zl3vni->l2vnis, node, nnode, zevpn))
 			vty_out(vty, "%u ", zevpn->vni);
@@ -796,6 +803,10 @@ CPP_NOTICE("Drop `vrf` from JSON outputs")
 		json_object_string_add(json, "vrf", zl3vni_vrf_name(zl3vni));
 		json_object_string_add(json, "tenantVrf",
 				       zl3vni_vrf_name(zl3vni));
+		json_object_int_add(json, "vlan", zl3vni->vid);
+		json_object_string_add(
+			json, "bridge",
+			(zl3vni->bridge_if ? zl3vni->bridge_if->name : "-"));
 		json_object_string_addf(json, "localVtepIp", "%pI4",
 					&zl3vni->local_vtep_ip);
 		json_object_string_add(json, "vxlanIntf",
@@ -818,6 +829,10 @@ CPP_NOTICE("Drop `vrf` from JSON outputs")
 			json_object_array_add(json_evpn_list,
 					      json_object_new_int(zevpn->vni));
 		}
+		json_object_int_add(json, "numMacs",
+				    hashcount(zl3vni->rmac_table));
+		json_object_int_add(json, "numArpNd",
+				    hashcount(zl3vni->nh_table));
 		json_object_object_add(json, "l2Vnis", json_evpn_list);
 	}
 }
@@ -836,11 +851,13 @@ static void zl3vni_print_hash(struct hash_bucket *bucket, void *ctx[])
 	zl3vni = (struct zebra_l3vni *)bucket->data;
 
 	if (!json) {
-		vty_out(vty, "%-10u %-4s %-21s %-8lu %-8lu %-15s %-37s\n",
+		vty_out(vty,
+			"%-10u %-4s %-21s %-8lu %-8lu %-15s %-15s %-10u %-37s \n",
 			zl3vni->vni, "L3", zl3vni_vxlan_if_name(zl3vni),
 			hashcount(zl3vni->rmac_table),
 			hashcount(zl3vni->nh_table), "n/a",
-			zl3vni_vrf_name(zl3vni));
+			zl3vni_vrf_name(zl3vni), zl3vni->vid,
+			(zl3vni->bridge_if ? zl3vni->bridge_if->name : "-"));
 	} else {
 		char vni_str[VNI_STR_LEN];
 
@@ -849,6 +866,10 @@ static void zl3vni_print_hash(struct hash_bucket *bucket, void *ctx[])
 		json_object_int_add(json_evpn, "vni", zl3vni->vni);
 		json_object_string_add(json_evpn, "vxlanIf",
 				       zl3vni_vxlan_if_name(zl3vni));
+		json_object_int_add(json_evpn, "vlan", zl3vni->vid);
+		json_object_string_add(
+			json_evpn, "bridge",
+			(zl3vni->bridge_if ? zl3vni->bridge_if->name : "-"));
 		json_object_int_add(json_evpn, "numMacs",
 				    hashcount(zl3vni->rmac_table));
 		json_object_int_add(json_evpn, "numArpNd",
