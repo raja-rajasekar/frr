@@ -2272,7 +2272,8 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 				UNSET_FLAG(re->status, ROUTE_ENTRY_FAILED);
 				SET_FLAG(re->status, ROUTE_ENTRY_INSTALLED);
 				/* Increment the installed re count for the nhe */
-				re->nhe->installed_re_count++;
+				if (re->nhe)
+					re->nhe->installed_re_count++;
 
 				if (op == DPLANE_OP_ROUTE_LAST && (IS_ZEBRA_DEBUG_EVENT))
 					zlog_debug("GR %s: Successfully reinstalled %pRN with RTM_F_LAST_ROUTE flag on re %p",
