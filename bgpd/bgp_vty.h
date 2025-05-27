@@ -45,7 +45,7 @@ struct bgp;
 #define BGP_SHOW_SUMMARY_HEADER_FAILED "EstdCnt DropCnt ResetTime Reason\n"
 
 #define BGP_SHOW_NEIGHBORS_BRIEF_HEADER                                                            \
-	"\nNeighbor                AS   MsgRcvd   MsgSent  ResetTime        State         Afi/Safi    PfxRcd    PfxSnt\n"
+	"        AS   MsgRcvd   MsgSent  ResetTime        State         Afi/Safi    PfxRcd    PfxSnt\n"
 
 #define BGP_SHOW_PEER_GR_CAPABILITY(vty, p, json)                              \
 	do {                                                                   \
