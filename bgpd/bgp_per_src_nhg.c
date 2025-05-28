@@ -589,17 +589,9 @@ char *inaddr_afi_to_str(const struct in_addr *id, char *buf, int size, afi_t afi
 	if (afi == AFI_IP) {
 		inet_ntop(AF_INET, id, buf, size);
 	} else if (afi == AFI_IP6) {
-		struct ipaddr ipaddr;
-
-		/* Initialize the ipaddr structure */
-		memset(&ipaddr, 0, sizeof(ipaddr));
-		SET_IPADDR_V6(&ipaddr);
-
-		/* Convert IPv4 to IPv4-mapped IPv6 address */
-		ipv4_to_ipv4_mapped_ipv6(&ipaddr.ipaddr_v6, *id);
-
-		/* Use ipaddr2str for proper mixed notation */
-		ipaddr2str(&ipaddr, buf, size);
+		struct in6_addr v6addr;
+		ipv4_to_ipv4_mapped_ipv6(&v6addr, *id);
+		inet_ntop(AF_INET6, &v6addr, buf, size);
 	}
 
 	return buf;
