@@ -99,31 +99,31 @@ module frr-bgp-peer {
             description
                 "Last Established Time";
           }
-          leaf description{
+          leaf description {
             config false;
             type string;
             description
                 "Description of peer";
           }
-          leaf peer-group{
+          leaf peer-group {
             config false;
             type string;
             description
                 "Name of peer-group";
           }
-          leaf peer-type{
+          leaf peer-type {
             config false;
             type string;
             description
                 "Type of peer";
           }
-          leaf neighbor-address{
+          leaf neighbor-address {
             config false;
             type string;
             description
                 "IP Address of BGP peer";
           }
-          leaf last-notification-error-code{
+          leaf last-notification-error-code {
             config false;
             type uint32;
             description

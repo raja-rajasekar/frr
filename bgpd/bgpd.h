@@ -2673,18 +2673,6 @@ static inline void bgp_unlock(struct bgp *bgp)
 		bgp_free(bgp);
 }
 
-static inline const char *get_peer_type_str(struct peer *peer)
-{
-	switch (peer->sort) {
-	case BGP_PEER_IBGP:
-		return "INTERNAL";
-	case BGP_PEER_EBGP:
-		return "EXTERNAL";
-	default:
-		return "UNKNOWN";
-	}
-}
-
 static inline int afindex(afi_t afi, safi_t safi)
 {
 	switch (afi) {
