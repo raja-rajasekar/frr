@@ -87,7 +87,7 @@ enum zebra_if_flags {
 	 * and inherited by the bond (if one or more bond members are in
 	 * a bypass state the bond is placed in a bypass state)
 	 */
-	ZIF_FLAG_LACP_BYPASS = (1 << 3),
+	ZIF_FLAG_LACP_BYPASS = (1 << 5),
 
 	/* On local ESs ARP ND snooping is enabling if fast-failover is
 	 * needed with arp-suppression on
