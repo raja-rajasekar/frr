@@ -8,7 +8,9 @@
 #define _FRR_NORTHBOUND_WRAPPERS_H_
 
 #include "prefix.h"
-#include <bgpd/bgpd.h>
+
+/* Forward declaration to avoid circular dependency */
+//struct peer;
 
 #ifdef __cplusplus
 extern "C" {
@@ -210,13 +212,15 @@ extern float yang_dnode_get_bandwidth_ieee_float32(const struct lyd_node *dnode,
 
 /* nexthop enum2str */
 extern const char *yang_nexthop_type2str(uint32_t ntype);
-extern const char *get_peer_type_str(struct peer *peer);
 
 extern const char *yang_afi_safi_value2identity(afi_t afi, safi_t safi);
 extern void yang_afi_safi_identity2value(const char *key, afi_t *afi, safi_t *safi);
 
 /* Address family to index mapping */
 extern int yang_afi_safi_name2index(const char *name);
+
+/* peer type */
+//extern const char *yang_peer_type2str(struct peer *peer);
 
 #ifdef __cplusplus
 }

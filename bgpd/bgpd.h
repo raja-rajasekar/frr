@@ -1032,6 +1032,8 @@ struct bgp_notify {
 	bool hard_reset;
 	char *data;
 	uint8_t *raw_data;
+	uint8_t code_sent;
+	uint8_t code_received;
 };
 
 /* Next hop self address. */
@@ -2737,6 +2739,21 @@ static inline int afindex(afi_t afi, safi_t safi)
 	}
 
 	assert(!"Reached end of function we should never hit");
+}
+
+static inline const char *yang_peer_type2str(struct peer *peer)
+{
+	switch (peer->sort) {
+	case BGP_PEER_IBGP:
+		return "INTERNAL";
+	case BGP_PEER_EBGP:
+		return "EXTERNAL";
+	case BGP_PEER_UNSPECIFIED:
+	case BGP_PEER_INTERNAL:
+	case BGP_PEER_CONFED:
+	default:
+		return "UNKNOWN";
+	}
 }
 
 /* If the peer is not a peer-group but is bound to a peer-group return 1 */

@@ -39,7 +39,9 @@ lib_vrf_peer_description_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *
 lib_vrf_peer_neighbor_address_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *
-lib_vrf_peer_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *args);
+lib_vrf_peer_messages_sent_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *args);
+struct yang_data *
+lib_vrf_peer_messages_received_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *
 lib_vrf_peer_group_get_elem(struct nb_cb_get_elem_args *args);
 struct yang_data *

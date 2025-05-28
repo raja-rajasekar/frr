@@ -5,6 +5,7 @@
  */
 
 #include <zebra.h>
+#include <bgpd/bgpd.h>
 #include "base64.h"
 #include "log.h"
 #include "lib_errors.h"
@@ -1089,7 +1090,7 @@ const char *yang_nexthop_type2str(uint32_t ntype)
 	}
 }
 
-const char *get_peer_type_str(struct peer *peer)
+/*const char *yang_peer_type2str(struct peer *peer)
 {
 	switch (peer->sort) {
 	case BGP_PEER_IBGP:
@@ -1102,7 +1103,7 @@ const char *get_peer_type_str(struct peer *peer)
 	default:
 		return "UNKNOWN";
 	}
-}
+}*/
 
 const char *yang_afi_safi_value2identity(afi_t afi, safi_t safi)
 {
