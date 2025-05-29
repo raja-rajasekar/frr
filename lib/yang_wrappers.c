@@ -1090,9 +1090,9 @@ const char *yang_nexthop_type2str(uint32_t ntype)
 	}
 }
 
-const char *yang_peer_type2str(struct peer *peer)
+const char *yang_peer_type2str(uint8_t sort)
 {
-	switch (peer->sort) {
+	switch (sort) {
 	case BGP_PEER_IBGP:
 		return "INTERNAL";
 	case BGP_PEER_EBGP:
@@ -1100,6 +1100,28 @@ const char *yang_peer_type2str(struct peer *peer)
 	case BGP_PEER_UNSPECIFIED:
 	case BGP_PEER_INTERNAL:
 	case BGP_PEER_CONFED:
+	default:
+		return "UNKNOWN";
+	}
+}
+
+const char *yang_bgp_notify_code2str(uint8_t code)
+{
+	switch (code) {
+	case BGP_NOTIFY_HEADER_ERR:
+		return "MESSAGE_HEADER_ERROR";
+	case BGP_NOTIFY_OPEN_ERR:
+		return "OPEN_MESSAGE_ERROR";
+	case BGP_NOTIFY_UPDATE_ERR:
+		return "UPDATE_MESSAGE_ERROR";
+	case BGP_NOTIFY_HOLD_ERR:
+		return "HOLD_TIME_EXPIRED";
+	case BGP_NOTIFY_FSM_ERR:
+		return "FINITE_STATE_MACHINE_ERROR";
+	case BGP_NOTIFY_CEASE:
+		return "CEASE";
+	case BGP_NOTIFY_ROUTE_REFRESH_ERR:
+		return "ROUTE_REFRESH_MESSAGE_ERROR";
 	default:
 		return "UNKNOWN";
 	}

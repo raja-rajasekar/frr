@@ -378,7 +378,7 @@ lib_vrf_peer_type_get_elem(struct nb_cb_get_elem_args *args){
 	peer = (struct peer *)args->list_entry;
 	if(!peer)
 		return yang_data_new_string(args->xpath, "UNKNOWN");
-	return yang_data_new_string(args->xpath, yang_peer_type2str(peer));
+	return yang_data_new_string(args->xpath, yang_peer_type2str(peer->sort));
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/neighbor-address
@@ -412,7 +412,7 @@ lib_vrf_peer_messages_sent_last_notification_error_code_get_elem(struct nb_cb_ge
 	peer = (struct peer *)args->list_entry;
 	if (!peer->notify.code_sent)
 		return NULL;
-	return yang_data_new_string(args->xpath, bgp_notify_code_str(peer->notify.code_sent));
+	return yang_data_new_string(args->xpath, yang_bgp_notify_code2str(peer->notify.code_sent));
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/messages/received/last-notification-error-code
@@ -425,7 +425,7 @@ lib_vrf_peer_messages_received_last_notification_error_code_get_elem(struct nb_c
 	peer = (struct peer *)args->list_entry;
 	if (!peer->notify.code_received)
 		return NULL;
-	return yang_data_new_string(args->xpath, bgp_notify_code_str(peer->notify.code_received));
+	return yang_data_new_string(args->xpath, yang_bgp_notify_code2str(peer->notify.code_received));
 }
 
 /*
