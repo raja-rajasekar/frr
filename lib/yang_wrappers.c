@@ -1101,7 +1101,7 @@ const char *yang_peer_type2str(uint8_t sort)
 	case BGP_PEER_INTERNAL:
 	case BGP_PEER_CONFED:
 	default:
-		return "UNKNOWN";
+		return "";
 	}
 }
 

@@ -377,7 +377,7 @@ lib_vrf_peer_type_get_elem(struct nb_cb_get_elem_args *args){
 		return NULL;
 	peer = (struct peer *)args->list_entry;
 	if(!peer)
-		return yang_data_new_string(args->xpath, "UNKNOWN");
+		return NULL;
 	return yang_data_new_string(args->xpath, yang_peer_type2str(peer->sort));
 }
 /*
