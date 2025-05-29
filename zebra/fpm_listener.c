@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <time.h>
 
 #ifdef GNU_LINUX
 #include <stdint.h>
@@ -31,15 +32,21 @@
 
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/if_link.h>
 
 #include "rt_netlink.h"
 #include "fpm/fpm.h"
 #include "lib/libfrr.h"
 
+XREF_SETUP();
+
 struct glob {
 	int server_sock;
 	int sock;
 	bool reflect;
+	bool reflect_fail_all;
+	bool dump_hex;
+	FILE *output_file;
 };
 
 struct glob glob_space;
@@ -62,6 +69,24 @@ get_print_buf(size_t *buf_len)
 
 	*buf_len = 128;
 	return &print_bufs[counter][0];
+}
+
+/*
+ * get_timestamp
+ * Returns a timestamp string.
+ */
+static const char *get_timestamp(void)
+{
+	static char timestamp[64];
+	struct timespec ts;
+	struct tm tm;
+
+	clock_gettime(CLOCK_REALTIME, &ts);
+	localtime_r(&ts.tv_sec, &tm);
+	snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d.%09ld",
+		 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+		 ts.tv_nsec);
+	return timestamp;
 }
 
 /*
@@ -119,13 +144,13 @@ static int accept_conn(int listen_sock)
 	while (1) {
 		char buf[120];
 
-		fprintf(stdout, "Waiting for client connection...\n");
+		fprintf(glob->output_file, "Waiting for client connection...\n");
 		client_len = sizeof(client_addr);
 		sock = accept(listen_sock, (struct sockaddr *)&client_addr,
 			      &client_len);
 
 		if (sock >= 0) {
-			fprintf(stdout, "Accepted client %s\n",
+			fprintf(glob->output_file, "[%s] Accepted client %s\n", get_timestamp(),
 				inet_ntop(AF_INET, &client_addr.sin_addr, buf, sizeof(buf)));
 			return sock;
 		}
@@ -168,8 +193,7 @@ read_fpm_msg(char *buf, size_t buf_len)
 		bytes_read = read(glob->sock, cur, need_len);
 
 		if (bytes_read == 0) {
-			fprintf(stdout,
-				"Socket closed as that read returned 0\n");
+			fprintf(glob->output_file, "Socket closed as that read returned 0\n");
 			return NULL;
 		}
 
@@ -185,7 +209,7 @@ read_fpm_msg(char *buf, size_t buf_len)
 			fprintf(stderr,
 				"Read %lu bytes but expected to read %lu bytes instead\n",
 				bytes_read, need_len);
-			return NULL;
+			continue;
 		}
 
 		if (reading_full_msg)
@@ -290,6 +314,8 @@ netlink_prot_to_s(unsigned char prot)
 struct netlink_nh {
 	struct rtattr *gateway;
 	int if_index;
+	uint16_t encap_type;
+	uint32_t vxlan_vni;
 };
 
 struct netlink_msg_ctx {
@@ -339,7 +365,7 @@ static inline void netlink_msg_ctx_set_err(struct netlink_msg_ctx *ctx,
  * parse_rtattrs_
  */
 static int parse_rtattrs_(struct rtattr *rta, size_t len, struct rtattr **rtas,
-		   int num_rtas, const char **err_msg)
+			  uint16_t num_rtas, const char **err_msg)
 {
 	memset(rtas, 0, num_rtas * sizeof(rtas[0]));
 
@@ -385,7 +411,8 @@ static int parse_rtattrs(struct netlink_msg_ctx *ctx, struct rtattr *rta,
  * netlink_msg_ctx_add_nh
  */
 static int netlink_msg_ctx_add_nh(struct netlink_msg_ctx *ctx, int if_index,
-				  struct rtattr *gateway)
+				  struct rtattr *gateway, uint16_t encap_type,
+				  uint32_t vxlan_vni)
 {
 	struct netlink_nh *nh;
 
@@ -398,6 +425,9 @@ static int netlink_msg_ctx_add_nh(struct netlink_msg_ctx *ctx, int if_index,
 
 	nh->gateway = gateway;
 	nh->if_index = if_index;
+
+	nh->encap_type = encap_type;
+	nh->vxlan_vni = vxlan_vni;
 	return 1;
 }
 
@@ -410,6 +440,7 @@ static int parse_multipath_attr(struct netlink_msg_ctx *ctx,
 	int len;
 	struct rtnexthop *rtnh;
 	struct rtattr *rtattrs[RTA_MAX + 1];
+	struct rtattr *tb[RTA_MAX + 1];
 	struct rtattr *gateway;
 	const char *err_msg;
 
@@ -418,6 +449,8 @@ static int parse_multipath_attr(struct netlink_msg_ctx *ctx,
 
 	for (; len > 0;
 	     len -= NLMSG_ALIGN(rtnh->rtnh_len), rtnh = RTNH_NEXT(rtnh)) {
+		uint32_t vxlan_vni;
+		uint16_t encap_type;
 
 		if (!RTNH_OK(rtnh, len)) {
 			netlink_msg_ctx_set_err(ctx, "Malformed nh");
@@ -441,7 +474,27 @@ static int parse_multipath_attr(struct netlink_msg_ctx *ctx,
 		}
 
 		gateway = rtattrs[RTA_GATEWAY];
-		netlink_msg_ctx_add_nh(ctx, rtnh->rtnh_ifindex, gateway);
+		memset(tb, 0, sizeof(tb));
+		if (rtattrs[RTA_ENCAP]) {
+			parse_rtattrs_(RTA_DATA(rtattrs[RTA_ENCAP]),
+				       rtattrs[RTA_ENCAP]->rta_len -
+					       sizeof(struct rtattr),
+				       tb, ARRAY_SIZE(tb), &err_msg);
+		}
+
+		if (rtattrs[RTA_ENCAP_TYPE])
+			encap_type =
+				*(uint16_t *)RTA_DATA(rtattrs[RTA_ENCAP_TYPE]);
+		else
+			encap_type = 0;
+
+		if (tb[0])
+			vxlan_vni = *(uint32_t *)RTA_DATA(tb[0]);
+		else
+			vxlan_vni = 0;
+
+		netlink_msg_ctx_add_nh(ctx, rtnh->rtnh_ifindex, gateway,
+				       encap_type, vxlan_vni);
 	}
 
 	return 1;
@@ -483,11 +536,33 @@ static int parse_route_msg(struct netlink_msg_ctx *ctx)
 	gateway = rtattrs[RTA_GATEWAY];
 	oif = rtattrs[RTA_OIF];
 	if (gateway || oif) {
+		struct rtattr *tb[RTA_MAX + 1] = { 0 };
+		uint16_t encap_type = 0;
+		uint32_t vxlan_vni = 0;
+
 		if_index = 0;
 		if (oif)
 			if_index = *((int *)RTA_DATA(oif));
 
-		netlink_msg_ctx_add_nh(ctx, if_index, gateway);
+
+		if (rtattrs[RTA_ENCAP]) {
+			const char *err_msg;
+
+			parse_rtattrs_(RTA_DATA(rtattrs[RTA_ENCAP]),
+				       rtattrs[RTA_ENCAP]->rta_len -
+					       sizeof(struct rtattr),
+				       tb, ARRAY_SIZE(tb), &err_msg);
+		}
+
+		if (rtattrs[RTA_ENCAP_TYPE])
+			encap_type =
+				*(uint16_t *)RTA_DATA(rtattrs[RTA_ENCAP_TYPE]);
+
+		if (tb[0])
+			vxlan_vni = *(uint32_t *)RTA_DATA(tb[0]);
+
+		netlink_msg_ctx_add_nh(ctx, if_index, gateway, encap_type,
+				       vxlan_vni);
 	}
 
 	rtattr = rtattrs[RTA_MULTIPATH];
@@ -512,7 +587,7 @@ addr_to_s(unsigned char family, void *addr)
 }
 
 /*
- * netlink_msg_ctx_print
+ * netlink_msg_ctx_snprint
  */
 static int netlink_msg_ctx_snprint(struct netlink_msg_ctx *ctx, char *buf,
 				   size_t buf_len)
@@ -529,12 +604,10 @@ static int netlink_msg_ctx_snprint(struct netlink_msg_ctx *ctx, char *buf,
 	cur = buf;
 	end = buf + buf_len;
 
-	cur += snprintf(cur, end - cur, "%s %s/%d, Prot: %s(%u)",
+	cur += snprintf(cur, end - cur, "[%s] %s %s/%d, Prot: %s(%u)", get_timestamp(),
 			netlink_msg_type_to_s(hdr->nlmsg_type),
-			addr_to_s(rtmsg->rtm_family, RTA_DATA(ctx->dest)),
-			rtmsg->rtm_dst_len,
-			netlink_prot_to_s(rtmsg->rtm_protocol),
-			rtmsg->rtm_protocol);
+			addr_to_s(rtmsg->rtm_family, RTA_DATA(ctx->dest)), rtmsg->rtm_dst_len,
+			netlink_prot_to_s(rtmsg->rtm_protocol), rtmsg->rtm_protocol);
 
 	if (ctx->metric)
 		cur += snprintf(cur, end - cur, ", Metric: %d", *ctx->metric);
@@ -555,6 +628,11 @@ static int netlink_msg_ctx_snprint(struct netlink_msg_ctx *ctx, char *buf,
 			cur += snprintf(cur, end - cur, " via interface %d",
 					nh->if_index);
 		}
+
+		if (nh->encap_type)
+			cur += snprintf(cur, end - cur,
+					", Encap Type: %u Vxlan vni %u",
+					nh->encap_type, nh->vxlan_vni);
 	}
 
 	return cur - buf;
@@ -568,7 +646,52 @@ static void print_netlink_msg_ctx(struct netlink_msg_ctx *ctx)
 	char buf[1024];
 
 	netlink_msg_ctx_snprint(ctx, buf, sizeof(buf));
-	printf("%s\n", buf);
+	fprintf(glob->output_file, "%s\n", buf);
+}
+
+static void fpm_listener_hexdump(const void *mem, size_t len)
+{
+	char line[64];
+	const uint8_t *src = mem;
+	const uint8_t *end = src + len;
+
+	if (!glob->dump_hex)
+		return;
+
+	if (len == 0) {
+		fprintf(glob->output_file, "%016lx: (zero length / no data)\n", (long)src);
+		return;
+	}
+
+	while (src < end) {
+		struct fbuf fb = {
+			.buf = line,
+			.pos = line,
+			.len = sizeof(line),
+		};
+		const uint8_t *lineend = src + 8;
+		uint32_t line_bytes = 0;
+
+		fprintf(glob->output_file, "%016lx: ", (long)src);
+
+		while (src < lineend && src < end) {
+			fprintf(glob->output_file, "%02x ", *src++);
+			line_bytes++;
+		}
+		if (line_bytes < 8)
+			fprintf(glob->output_file, "%*s", (8 - line_bytes) * 3, "");
+
+		src -= line_bytes;
+		while (src < lineend && src < end && fb.pos < fb.buf + fb.len) {
+			uint8_t byte = *src++;
+
+			if (isprint(byte))
+				*fb.pos++ = byte;
+			else
+				*fb.pos++ = '.';
+		}
+		fprintf(glob->output_file, "\n");
+	}
 }
 
 /*
@@ -580,6 +703,7 @@ static void parse_netlink_msg(char *buf, size_t buf_len, fpm_msg_hdr_t *fpm)
 	struct nlmsghdr *hdr;
 	unsigned int len;
 
+	fpm_listener_hexdump(buf, buf_len);
 	ctx = &ctx_space;
 
 	hdr = (struct nlmsghdr *)buf;
@@ -587,7 +711,7 @@ static void parse_netlink_msg(char *buf, size_t buf_len, fpm_msg_hdr_t *fpm)
 	for (; NLMSG_OK(hdr, len); hdr = NLMSG_NEXT(hdr, len)) {
 
 		netlink_msg_ctx_init(ctx);
-		ctx->hdr = (struct nlmsghdr *)buf;
+		ctx->hdr = hdr;
 
 		switch (hdr->nlmsg_type) {
 
@@ -605,19 +729,22 @@ static void parse_netlink_msg(char *buf, size_t buf_len, fpm_msg_hdr_t *fpm)
 
 			if (glob->reflect && hdr->nlmsg_type == RTM_NEWROUTE &&
 			    ctx->rtmsg->rtm_protocol > RTPROT_STATIC) {
-				printf("  Route %s(%u) reflecting back\n",
-				       netlink_prot_to_s(
-					       ctx->rtmsg->rtm_protocol),
-				       ctx->rtmsg->rtm_protocol);
-				ctx->rtmsg->rtm_flags |= RTM_F_OFFLOAD;
+				fprintf(glob->output_file,
+					"[%s] Route %s(%u) reflecting back as %s\n",
+					get_timestamp(), netlink_prot_to_s(ctx->rtmsg->rtm_protocol),
+					ctx->rtmsg->rtm_protocol,
+					glob->reflect_fail_all ? "Offload Failed" : "Offloaded");
+				if (glob->reflect_fail_all)
+					ctx->rtmsg->rtm_flags |= RTM_F_OFFLOAD_FAILED;
+				else
+					ctx->rtmsg->rtm_flags |= RTM_F_OFFLOAD;
 				write(glob->sock, fpm, fpm_msg_len(fpm));
 			}
 			break;
 
 		default:
-			fprintf(stdout,
-				"Ignoring netlink message - Type: %s(%d)\n",
-				netlink_msg_type_to_s(hdr->nlmsg_type),
+			fprintf(glob->output_file, "[%s] Ignoring netlink message - Type: %s(%d)\n",
+				get_timestamp(), netlink_msg_type_to_s(hdr->nlmsg_type),
 				hdr->nlmsg_type);
 		}
 	}
@@ -628,8 +755,8 @@ static void parse_netlink_msg(char *buf, size_t buf_len, fpm_msg_hdr_t *fpm)
  */
 static void process_fpm_msg(fpm_msg_hdr_t *hdr)
 {
-	fprintf(stdout, "FPM message - Type: %d, Length %d\n", hdr->msg_type,
-	      ntohs(hdr->msg_len));
+	fprintf(glob->output_file, "[%s] FPM message - Type: %d, Length %d\n", get_timestamp(),
+		hdr->msg_type, ntohs(hdr->msg_len));
 
 	if (hdr->msg_type != FPM_MSG_TYPE_NETLINK) {
 		fprintf(stderr, "Unknown fpm message type %u\n", hdr->msg_type);
@@ -650,8 +777,10 @@ static void fpm_serve(void)
 	while (1) {
 
 		hdr = read_fpm_msg(buf, sizeof(buf));
-		if (!hdr)
+		if (!hdr) {
+			close(glob->sock);
 			return;
+		}
 
 		process_fpm_msg(hdr);
 	}
@@ -662,19 +791,41 @@ int main(int argc, char **argv)
 	pid_t daemon;
 	int r;
 	bool fork_daemon = false;
+	const char *output_file = NULL;
 
 	memset(glob, 0, sizeof(*glob));
+	glob->output_file = stdout;
 
-	while ((r = getopt(argc, argv, "rd")) != -1) {
+	while ((r = getopt(argc, argv, "rfdvo:")) != -1) {
 		switch (r) {
 		case 'r':
 			glob->reflect = true;
 			break;
+		case 'f':
+			glob->reflect_fail_all = true;
+			break;
 		case 'd':
 			fork_daemon = true;
 			break;
+		case 'v':
+			glob->dump_hex = true;
+			break;
+		case 'o':
+			output_file = optarg;
+			break;
 		}
 	}
+
+	if (output_file) {
+		glob->output_file = fopen(output_file, "w");
+		if (!glob->output_file) {
+			fprintf(stderr, "Failed to open output file %s: %s\n", output_file,
+				strerror(errno));
+			exit(1);
+		}
+	}
+
+	setbuf(glob->output_file, NULL);
 
 	if (fork_daemon) {
 		daemon = fork();
@@ -692,7 +843,7 @@ int main(int argc, char **argv)
 	while (1) {
 		glob->sock = accept_conn(glob->server_sock);
 		fpm_serve();
-		fprintf(stdout, "Done serving client");
+		fprintf(glob->output_file, "Done serving client\n");
 	}
 }
 #else
