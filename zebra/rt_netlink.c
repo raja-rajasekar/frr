@@ -3913,7 +3913,6 @@ static ssize_t netlink_neigh_update_msg_encode(
 			return 0;
 	}
 	if (lla && ip) {
-	    zlog_info("%s family %s  %u", __func__, nl_family_to_str(family), family);
 		frrtrace(8, frr_zebra, netlink_neigh_update_msg_encode, lla, ip, nhg_id, flags,
 			 state, family, type, op);
 	} else if (lla) {
