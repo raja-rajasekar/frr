@@ -130,9 +130,6 @@ struct zebra_if {
 	/* back pointer to the interface */
 	struct interface *ifp;
 
-	/* Event timer to batch  ICMPv6 join requests */
-	struct event *icmpv6_join_timer;
-
 	/* Flags values, see above. */
 	uint32_t flags;
 

@@ -413,22 +413,17 @@ void zebra_nhe_init(struct nhg_hash_entry *nhe, afi_t afi,
 	 */
 	if (nh && (nh->next == NULL)) {
 		switch (nh->type) {
+		case NEXTHOP_TYPE_IFINDEX:
+		case NEXTHOP_TYPE_BLACKHOLE:
 			/*
 			 * This switch case handles setting the afi different
-			 * for ipv4/v6 routes. Ifindex nexthop
+			 * for ipv4/v6 routes. Ifindex/blackhole nexthop
 			 * objects cannot be ambiguous, they must be Address
-			 * Family specific as that the kernel relies on these
-			 * for some reason.  blackholes can be v6 because the
-			 * v4 kernel infrastructure allows the usage of v6
-			 * blackholes in this case.   if we get here, we will
-			 * either use the AF of the route, or the one we got
-			 * passed from here from the kernel.
+			 * Family specific. If we get here, we will either use
+			 * the AF of the route, or the one we got passed from
+			 * here from the kernel.
 			 */
-		case NEXTHOP_TYPE_IFINDEX:
 			nhe->afi = afi;
-			break;
-		case NEXTHOP_TYPE_BLACKHOLE:
-			nhe->afi = AFI_IP6;
 			break;
 		case NEXTHOP_TYPE_IPV4_IFINDEX:
 		case NEXTHOP_TYPE_IPV4:
@@ -2814,6 +2809,13 @@ static unsigned nexthop_active_check(struct route_node *rn,
 			UNSET_FLAG(nexthop->flags, NEXTHOP_FLAG_ACTIVE);
 		break;
 	case NEXTHOP_TYPE_IPV6:
+		family = AFI_IP6;
+		if (nexthop_active(nexthop, nhe, &rn->p, re->type, re->flags,
+				   &mtu, vrf_id))
+			SET_FLAG(nexthop->flags, NEXTHOP_FLAG_ACTIVE);
+		else
+			UNSET_FLAG(nexthop->flags, NEXTHOP_FLAG_ACTIVE);
+		break;
 	case NEXTHOP_TYPE_IPV6_IFINDEX:
 		/* RFC 5549, v4 prefix with v6 NH */
 		if (rn->p.family != AF_INET)
