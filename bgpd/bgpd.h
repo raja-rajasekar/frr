@@ -1034,6 +1034,8 @@ struct bgp_notify {
 	uint8_t *raw_data;
 	uint8_t code_sent;
 	uint8_t code_received;
+	uint8_t subcode_sent;
+	uint8_t subcode_received;
 };
 
 /* Next hop self address. */

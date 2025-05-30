@@ -1006,6 +1006,7 @@ static void bgp_notify_send_internal(struct peer_connection *connection,
 		peer->notify.code = bgp_notify.code;
 		peer->notify.code_sent = bgp_notify.code;
 		peer->notify.subcode = bgp_notify.subcode;
+		peer->notify.subcode_sent = bgp_notify.subcode;
 		peer->notify.length = bgp_notify.length;
 
 		if (bgp_notify.length && data) {
@@ -2579,6 +2580,7 @@ static int bgp_notify_receive(struct peer_connection *connection,
 	peer->notify.code = inner.code;
 	peer->notify.code_received = inner.code;
 	peer->notify.subcode = inner.subcode;
+	peer->notify.subcode_received = inner.subcode;
 	/* For further diagnostic record returned Data. */
 	if (inner.length) {
 		peer->notify.length = inner.length;
