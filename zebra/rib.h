@@ -194,12 +194,6 @@ struct route_entry {
 struct meta_queue {
 	struct list *subq[MQ_SIZE];
 	uint32_t size; /* sum of lengths of all subqueues */
-	_Atomic uint32_t max_subq[MQ_SIZE];    /* Max size of individual sub queue */
-	_Atomic uint32_t max_metaq;	       /* Max size of the MetaQ */
-	_Atomic uint32_t total_subq[MQ_SIZE];  /* Total subq events */
-	_Atomic uint32_t total_metaq;	       /* Total MetaQ events */
-	_Atomic uint32_t re_subq[MQ_SIZE];     /* current RE count sub queue */
-	_Atomic uint32_t max_re_subq[MQ_SIZE]; /* Max RE in sub queue */
 };
 
 /*
@@ -478,8 +472,6 @@ extern void meta_queue_free(struct meta_queue *mq, struct zebra_vrf *zvrf);
 extern int zebra_rib_labeled_unicast(struct route_entry *re);
 extern struct route_table *rib_table_ipv6;
 
-extern uint32_t zebra_rib_meta_queue_size(void);
-
 extern void rib_unlink(struct route_node *rn, struct route_entry *re);
 extern int rib_gc_dest(struct route_node *rn);
 extern struct route_table *rib_tables_iter_next(rib_tables_iter_t *iter);
@@ -488,8 +480,6 @@ extern uint8_t route_distance(int type);
 
 extern void zebra_rib_evaluate_rn_nexthops(struct route_node *rn, uint32_t seq,
 					   bool rt_delete);
-
-int zebra_show_metaq_counter(struct vty *vty, bool uj);
 
 /*
  * rib_find_rn_from_ctx

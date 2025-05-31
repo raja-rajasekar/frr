@@ -10,8 +10,3 @@
 /*
  * Main file for the qpb library.
  */
-
-#include "config.h"
-#include "xref.h"
-
-XREF_SETUP();

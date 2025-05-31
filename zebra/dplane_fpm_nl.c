@@ -30,7 +30,6 @@
 #include "lib/network.h"
 #include "lib/ns.h"
 #include "lib/frr_pthread.h"
-#include "lib/termtable.h"
 #include "zebra/debug.h"
 #include "zebra/interface.h"
 #include "zebra/zebra_dplane.h"
@@ -44,8 +43,6 @@
 #include "zebra/rt_netlink.h"
 #include "zebra/debug.h"
 #include "fpm/fpm.h"
-
-#include "zebra/dplane_fpm_nl_clippy.c"
 
 #define SOUTHBOUND_DEFAULT_ADDR INADDR_LOOPBACK
 
@@ -69,8 +66,6 @@
 #define FPM_HEADER_SIZE 4
 
 static const char *prov_name = "dplane_fpm_nl";
-
-static atomic_bool fpm_cleaning_up;
 
 struct fpm_nl_ctx {
 	/* data plane connection. */
@@ -325,74 +320,6 @@ DEFUN(fpm_reset_counters, fpm_reset_counters_cmd,
 	return CMD_SUCCESS;
 }
 
-DEFPY(fpm_show_status,
-      fpm_show_status_cmd,
-      "show fpm status [json]$json",
-      SHOW_STR FPM_STR "FPM status\n" JSON_STR)
-{
-	struct json_object *j;
-	bool connected;
-	uint16_t port;
-	struct sockaddr_in *sin;
-	struct sockaddr_in6 *sin6;
-	char buf[BUFSIZ];
-
-	connected = gfnc->socket > 0 ? true : false;
-
-	switch (gfnc->addr.ss_family) {
-	case AF_INET:
-		sin = (struct sockaddr_in *)&gfnc->addr;
-		snprintfrr(buf, sizeof(buf), "%pI4", &sin->sin_addr);
-		port = ntohs(sin->sin_port);
-		break;
-	case AF_INET6:
-		sin6 = (struct sockaddr_in6 *)&gfnc->addr;
-		snprintfrr(buf, sizeof(buf), "%pI6", &sin6->sin6_addr);
-		port = ntohs(sin6->sin6_port);
-		break;
-	default:
-		strlcpy(buf, "Unknown", sizeof(buf));
-		port = FPM_DEFAULT_PORT;
-		break;
-	}
-
-	if (json) {
-		j = json_object_new_object();
-
-		json_object_boolean_add(j, "connected", connected);
-		json_object_boolean_add(j, "useNHG", gfnc->use_nhg);
-		json_object_boolean_add(j, "useRouteReplace",
-					gfnc->use_route_replace);
-		json_object_boolean_add(j, "disabled", gfnc->disabled);
-		json_object_string_add(j, "address", buf);
-		json_object_int_add(j, "port", port);
-
-		vty_json(vty, j);
-	} else {
-		struct ttable *table = ttable_new(&ttable_styles[TTSTYLE_BLANK]);
-		char *out;
-
-		ttable_rowseps(table, 0, BOTTOM, true, '-');
-		ttable_add_row(table, "Address to connect to|%s", buf);
-		ttable_add_row(table, "Port|%u", port);
-		ttable_add_row(table, "Connected|%s", connected ? "Yes" : "No");
-		ttable_add_row(table, "Use Nexthop Groups|%s",
-			       gfnc->use_nhg ? "Yes" : "No");
-		ttable_add_row(table, "Use Route Replace Semantics|%s",
-			       gfnc->use_route_replace ? "Yes" : "No");
-		ttable_add_row(table, "Disabled|%s",
-			       gfnc->disabled ? "Yes" : "No");
-
-		out = ttable_dump(table, "\n");
-		vty_out(vty, "%s\n", out);
-		XFREE(MTYPE_TMP, out);
-
-		ttable_del(table);
-	}
-
-	return CMD_SUCCESS;
-}
-
 DEFUN(fpm_show_counters, fpm_show_counters_cmd,
       "show fpm counters",
       SHOW_STR
@@ -528,16 +455,6 @@ static void fpm_connect(struct event *t);
 
 static void fpm_reconnect(struct fpm_nl_ctx *fnc)
 {
-	bool cleaning_p = false;
-
-	/* This is being called in the FPM pthread: ensure we don't deadlock
-	 * with similar code that may be run in the main pthread.
-	 */
-	if (!atomic_compare_exchange_strong_explicit(
-		    &fpm_cleaning_up, &cleaning_p, true, memory_order_seq_cst,
-		    memory_order_seq_cst))
-		return;
-
 	/* Cancel all zebra threads first. */
 	event_cancel_async(zrouter.master, &fnc->t_lspreset, NULL);
 	event_cancel_async(zrouter.master, &fnc->t_lspwalk, NULL);
@@ -565,12 +482,6 @@ static void fpm_reconnect(struct fpm_nl_ctx *fnc)
 	EVENT_OFF(fnc->t_read);
 	EVENT_OFF(fnc->t_write);
 
-	/* Reset the barrier value */
-	cleaning_p = true;
-	atomic_compare_exchange_strong_explicit(
-		&fpm_cleaning_up, &cleaning_p, false, memory_order_seq_cst,
-		memory_order_seq_cst);
-
 	/* FPM is disabled, don't attempt to connect. */
 	if (fnc->disabled)
 		return;
@@ -589,10 +500,6 @@ static void fpm_read(struct event *t)
 	struct zebra_dplane_ctx *ctx;
 	size_t available_bytes;
 	size_t hdr_available_bytes;
-	struct dplane_ctx_list_head batch_list;
-
-	/* Initialize the batch list */
-	dplane_ctx_q_init(&batch_list);
 
 	/* Let's ignore the input at the moment. */
 	rv = stream_read_try(fnc->ibuf, fnc->socket,
@@ -633,7 +540,7 @@ static void fpm_read(struct event *t)
 	while (available_bytes) {
 		if (available_bytes < (ssize_t)FPM_MSG_HDR_LEN) {
 			stream_pulldown(fnc->ibuf);
-			goto send_batch;
+			return;
 		}
 
 		fpm.version = stream_getc(fnc->ibuf);
@@ -648,7 +555,7 @@ static void fpm_read(struct event *t)
 				__func__, fpm.version, fpm.msg_type);
 
 			FPM_RECONNECT(fnc);
-			goto send_batch;
+			return;
 		}
 
 		/*
@@ -660,7 +567,7 @@ static void fpm_read(struct event *t)
 				"%s: Received message length: %u that does not even fill the FPM header",
 				__func__, fpm.msg_len);
 			FPM_RECONNECT(fnc);
-			goto send_batch;
+			return;
 		}
 
 		/*
@@ -671,7 +578,7 @@ static void fpm_read(struct event *t)
 		if (fpm.msg_len > available_bytes) {
 			stream_rewind_getp(fnc->ibuf, FPM_MSG_HDR_LEN);
 			stream_pulldown(fnc->ibuf);
-			goto send_batch;
+			return;
 		}
 
 		available_bytes -= FPM_MSG_HDR_LEN;
@@ -684,6 +591,14 @@ static void fpm_read(struct event *t)
 		hdr_available_bytes = fpm.msg_len - FPM_MSG_HDR_LEN;
 		available_bytes -= hdr_available_bytes;
 
+		/* Sanity check: must be at least header size. */
+		if (hdr->nlmsg_len < sizeof(*hdr)) {
+			zlog_warn(
+				"%s: [seq=%u] invalid message length %u (< %zu)",
+				__func__, hdr->nlmsg_seq, hdr->nlmsg_len,
+				sizeof(*hdr));
+			continue;
+		}
 		if (hdr->nlmsg_len > fpm.msg_len) {
 			zlog_warn(
 				"%s: Received a inner header length of %u that is greater than the fpm total length of %u",
@@ -713,44 +628,17 @@ static void fpm_read(struct event *t)
 
 		switch (hdr->nlmsg_type) {
 		case RTM_NEWROUTE:
-			/* Sanity check: need at least route msg header size. */
-			if (hdr->nlmsg_len < sizeof(struct rtmsg)) {
-				zlog_warn("%s: [seq=%u] invalid message length %u (< %zu)",
-					  __func__, hdr->nlmsg_seq,
-					  hdr->nlmsg_len, sizeof(struct rtmsg));
-				break;
-			}
-
-			/*
-			 * Parse the route data into a dplane ctx, add to ctx list
-			 * and enqueue the batch of ctx to zebra for processing
-			 */
 			ctx = dplane_ctx_alloc();
 			dplane_ctx_route_init(ctx, DPLANE_OP_ROUTE_NOTIFY, NULL,
 					      NULL);
-
-			if (netlink_route_notify_read_ctx(hdr, 0, ctx) >= 0) {
-				/*
-				 * Receiving back a netlink message from
-				 * the fpm.  Currently the netlink messages
-				 * do not have a way to specify the vrf
-				 * so it must be unknown.  I'm looking
-				 * at you sonic.  If you are reading this
-				 * and wondering why it's not working
-				 * you must extend your patch to translate
-				 * the tableid to the vrfid and set the
-				 * tableid to 0 in order for this to work.
-				 */
-				dplane_ctx_set_vrf(ctx, VRF_UNKNOWN);
-				/* Add to the list for batching */
-				dplane_ctx_enqueue_tail(&batch_list, ctx);
-			} else {
+			if (netlink_route_change_read_unicast_internal(
+				    hdr, 0, false, ctx) != 1) {
+				dplane_ctx_fini(&ctx);
+				stream_pulldown(fnc->ibuf);
 				/*
 				 * Let's continue to read other messages
 				 * Even if we ignore this one.
 				 */
-				dplane_ctx_fini(&ctx);
-				stream_pulldown(fnc->ibuf);
 			}
 			break;
 		default:
@@ -763,15 +651,6 @@ static void fpm_read(struct event *t)
 	}
 
 	stream_reset(fnc->ibuf);
-
-send_batch:
-	/* Send all contexts to zebra in a single batch if we have any */
-	if (dplane_ctx_queue_count(&batch_list) > 0) {
-		if (IS_ZEBRA_DEBUG_FPM)
-			zlog_debug("%s: Sending batch of %u contexts to zebra", __func__,
-				   dplane_ctx_queue_count(&batch_list));
-		dplane_provider_enqueue_ctx_list_to_zebra(&batch_list);
-	}
 }
 
 static void fpm_write(struct event *t)
@@ -968,6 +847,8 @@ static int fpm_nl_enqueue(struct fpm_nl_ctx *fnc, struct zebra_dplane_ctx *ctx)
 
 	nl_buf_len = 0;
 
+	frr_mutex_lock_autounlock(&fnc->obuf_mutex);
+
 	/*
 	 * If route replace is enabled then directly encode the install which
 	 * is going to use `NLM_F_REPLACE` (instead of delete/add operations).
@@ -1121,8 +1002,6 @@ static int fpm_nl_enqueue(struct fpm_nl_ctx *fnc, struct zebra_dplane_ctx *ctx)
 
 	/* We must know if someday a message goes beyond 65KiB. */
 	assert((nl_buf_len + FPM_HEADER_SIZE) <= UINT16_MAX);
-
-	frr_mutex_lock_autounlock(&fnc->obuf_mutex);
 
 	/* Check if we have enough buffer space. */
 	if (STREAM_WRITEABLE(fnc->obuf) < (nl_buf_len + FPM_HEADER_SIZE)) {
@@ -1526,14 +1405,8 @@ static void fpm_process_queue(struct event *t)
 	uint64_t processed_contexts = 0;
 
 	while (true) {
-		size_t writeable_amount;
-
-		frr_with_mutex (&fnc->obuf_mutex) {
-			writeable_amount = STREAM_WRITEABLE(fnc->obuf);
-		}
-
 		/* No space available yet. */
-		if (writeable_amount < NL_PKT_BUF_SIZE) {
+		if (STREAM_WRITEABLE(fnc->obuf) < NL_PKT_BUF_SIZE) {
 			no_bufs = true;
 			break;
 		}
@@ -1678,16 +1551,6 @@ static int fpm_nl_start(struct zebra_dplane_provider *prov)
 
 static int fpm_nl_finish_early(struct fpm_nl_ctx *fnc)
 {
-	bool cleaning_p = false;
-
-	/* This is being called in the main pthread: ensure we don't deadlock
-	 * with similar code that may be run in the FPM pthread.
-	 */
-	if (!atomic_compare_exchange_strong_explicit(
-		    &fpm_cleaning_up, &cleaning_p, true, memory_order_seq_cst,
-		    memory_order_seq_cst))
-		return 0;
-
 	/* Disable all events and close socket. */
 	EVENT_OFF(fnc->t_lspreset);
 	EVENT_OFF(fnc->t_lspwalk);
@@ -1707,12 +1570,6 @@ static int fpm_nl_finish_early(struct fpm_nl_ctx *fnc)
 		close(fnc->socket);
 		fnc->socket = -1;
 	}
-
-	/* Reset the barrier value */
-	cleaning_p = true;
-	atomic_compare_exchange_strong_explicit(
-		&fpm_cleaning_up, &cleaning_p, false, memory_order_seq_cst,
-		memory_order_seq_cst);
 
 	return 0;
 }
@@ -1830,7 +1687,6 @@ static int fpm_nl_new(struct event_loop *tm)
 		zlog_debug("%s register status: %d", prov_name, rv);
 
 	install_node(&fpm_node);
-	install_element(ENABLE_NODE, &fpm_show_status_cmd);
 	install_element(ENABLE_NODE, &fpm_show_counters_cmd);
 	install_element(ENABLE_NODE, &fpm_show_counters_json_cmd);
 	install_element(ENABLE_NODE, &fpm_reset_counters_cmd);

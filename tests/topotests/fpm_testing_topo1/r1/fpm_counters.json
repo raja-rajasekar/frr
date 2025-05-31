@@ -1,8 +1,0 @@
-{
-  "connected":true,
-  "useNHG":true,
-  "useRouteReplace":true,
-  "disabled":false,
-  "address":"127.0.0.1",
-  "port":2620
-}
