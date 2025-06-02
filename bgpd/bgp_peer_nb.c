@@ -347,7 +347,7 @@ lib_vrf_peer_description_get_elem(struct nb_cb_get_elem_args *args)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
 	if (peer->desc == NULL){
-		return NULL;
+		return yang_data_new_string(args->xpath, "");
 	}
 	return yang_data_new_string(args->xpath, peer->desc);
 }
@@ -362,7 +362,7 @@ lib_vrf_peer_group_get_elem(struct nb_cb_get_elem_args *args){
 		return NULL;
 	peer = (struct peer *)args->list_entry;
 	if (peer->group == NULL){
-		return NULL;
+		return yang_data_new_string(args->xpath, "");
 	}
 	return yang_data_new_string(args->xpath, peer->group->name);
 }
@@ -376,8 +376,8 @@ lib_vrf_peer_type_get_elem(struct nb_cb_get_elem_args *args){
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	if(!peer)
-		return NULL;
+	if(!peer->sort)
+		return yang_data_new_string(args->xpath, "");
 	return yang_data_new_string(args->xpath, yang_peer_type2str(peer->sort));
 }
 /*
@@ -394,11 +394,11 @@ lib_vrf_peer_neighbor_address_get_elem(struct nb_cb_get_elem_args *args){
 	} else if (peer->connection->su.sa.sa_family == AF_INET6) {
 		char addr_str[INET6_ADDRSTRLEN];
 		if (inet_ntop(AF_INET6, &peer->connection->su.sin6.sin6_addr, addr_str, INET6_ADDRSTRLEN) == NULL) {
-			return NULL;
+			return yang_data_new_string(args->xpath, "");
 		}
 		return yang_data_new_string(args->xpath, addr_str);
 	}
-	return NULL;
+	return yang_data_new_string(args->xpath, "");
 }
 
 /*
@@ -411,7 +411,7 @@ lib_vrf_peer_messages_sent_last_notification_error_code_get_elem(struct nb_cb_ge
 		return NULL;
 	peer = (struct peer *)args->list_entry;
 	if (!peer->notify.code_sent)
-		return NULL;
+		return yang_data_new_string(args->xpath, "");
 	return yang_data_new_string(args->xpath, yang_bgp_notify_code2str(peer->notify.code_sent));
 }
 /*
@@ -424,7 +424,7 @@ lib_vrf_peer_messages_received_last_notification_error_code_get_elem(struct nb_c
 		return NULL;
 	peer = (struct peer *)args->list_entry;
 	if (!peer->notify.code_received)
-		return NULL;
+		return yang_data_new_string(args->xpath, "");
 	return yang_data_new_string(args->xpath, yang_bgp_notify_code2str(peer->notify.code_received));
 }
 
