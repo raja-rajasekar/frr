@@ -530,10 +530,11 @@ void bgp_path_info_mpath_update(struct bgp *bgp, struct bgp_dest *dest,
 		if (new_mpath) {
 			mpath_count++;
 
-			if (cur_iterator != new_best)
-				SET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
-			if (cur_iterator->net)
-			    bgp_pcount_installed(cur_iterator->net, cur_iterator, BGP_PATH_MULTIPATH, true);
+            if (cur_iterator != new_best) {
+                SET_FLAG(cur_iterator->flags, BGP_PATH_MULTIPATH);
+                if (cur_iterator->net)
+                    bgp_pcount_installed(cur_iterator->net, cur_iterator, BGP_PATH_MULTIPATH, true);
+            }
 
 			if (!old_mpath)
 				mpath_changed = true;
