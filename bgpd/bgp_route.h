@@ -771,6 +771,9 @@ extern void bgp_clear_stale_route(struct peer *, afi_t, safi_t);
 extern void bgp_set_stale_route(struct peer *peer, afi_t afi, safi_t safi);
 extern bool bgp_outbound_policy_exists(struct peer *, struct bgp_filter *);
 extern bool bgp_inbound_policy_exists(struct peer *, struct bgp_filter *);
+extern void bgp_pcount_installed(struct bgp_dest *dest,
+                struct bgp_path_info *pi, uint32_t flag,
+                bool set);
 
 extern struct bgp_dest *bgp_afi_node_get(struct bgp_table *table, afi_t afi,
 					 safi_t safi, const struct prefix *p,

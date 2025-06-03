@@ -672,21 +672,46 @@ static void bgp_pcount_adjust(struct bgp_dest *dest, struct bgp_path_info *pi)
 	     preferences (e.g., administrative distance) as the
 	     route to be used by the system's RIB"
 */
-static void bgp_pcount_installed(struct bgp_dest *dest, struct bgp_path_info *pi, uint32_t flag,
+ void bgp_pcount_installed(struct bgp_dest *dest,
+				 struct bgp_path_info *pi, uint32_t flag,
 				 bool set)
 {
-	struct bgp_table *table;
-	table = bgp_dest_table(dest);
+    struct bgp_table *table;
+    table = bgp_dest_table(dest);
 
-	zlog_debug("flag %d, pi->flag %d, set %d", flag, pi->flags, set);
-	if (CHECK_FLAG(flag, BGP_PATH_SELECTED) && set)
-		pi->peer->pinstalledcnt[table->afi][table->safi]++;
+    if (bgp_debug_zebra(NULL))
+        zlog_debug("flag %d, pi->flags %d, set %d", flag, pi->flags, set);
+    if (flag != BGP_PATH_SELECTED && flag != BGP_PATH_MULTIPATH)
+        return;
 
-	if (CHECK_FLAG(flag, BGP_PATH_SELECTED) && !set) {
-		if (pi->peer->pinstalledcnt[table->afi][table->safi])
-			pi->peer->pinstalledcnt[table->afi][table->safi]--;
-	}
-	return;
+    if (set) {
+        /* To avoid double counting we check flags this way */
+        if (flag == BGP_PATH_SELECTED) {
+            /* We just set SELECTED, check if MULTIPATH was already set */
+            if (!CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
+                pi->peer->pinstalledcnt[table->afi][table->safi]++;
+        } else { /* flag == BGP_PATH_MULTIPATH */
+            /* We just set MULTIPATH, check if SELECTED was already set */
+            if (!CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+                pi->peer->pinstalledcnt[table->afi][table->safi]++;
+        }
+    } else {
+        if (flag == BGP_PATH_SELECTED) {
+            /* We just unset SELECTED, check if MULTIPATH is also not set */
+            if (!CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH)) {
+                if (pi->peer->pinstalledcnt[table->afi][table->safi])
+                    pi->peer->pinstalledcnt[table->afi][table->safi]--;
+            }
+        } else {
+            /* We just unset MULTIPATH, check if SELECTED is also not set */
+            if (!CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
+                if (pi->peer->pinstalledcnt[table->afi][table->safi])
+                    pi->peer->pinstalledcnt[table->afi][table->safi]--;
+            }
+        }
+    }
+
+    return;
 }
 
 static int bgp_label_index_differs(struct bgp_path_info *pi1,
