@@ -12062,7 +12062,7 @@ DEFPY(show_bgp_redistribute,
       "Detailed information on redistribute\n"
       JSON_STR)
 {
-	safi_t afi = AFI_IP6;
+	afi_t afi = AFI_IP6;
 	safi_t safi = SAFI_UNICAST;
 	struct bgp *bgp = NULL;
 	bool uj = use_json(argc, argv);
