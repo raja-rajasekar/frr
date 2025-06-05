@@ -1637,7 +1637,10 @@ def ignore_delete_re_add_lines(lines_to_add, lines_to_del):
                 + re_acl_pfxlst.group(5)
                 + re_acl_pfxlst.group(6)
             )
+            existing_entries = set()
             for ctx in lines_to_add:
+                if ctx[0]:
+                    existing_entries.add(ctx[0][0])
                 if ctx[0][0] == tmpline:
                     lines_to_del_to_del.append((ctx_keys, None))
                     lines_to_add_to_del.append(((tmpline,), None))
@@ -1652,17 +1655,19 @@ def ignore_delete_re_add_lines(lines_to_add, lines_to_del):
                     all_pfx_no_cmd = f"no {re_acl_pfxlst.group(1)} {re_acl_pfxlst.group(2)} {prefix_list_name}"
                     all_pfx_no_exists = False
                     # Look through lines_to_add for the general no command
-                    for (ctx_keys_add, line_add) in lines_to_add:
-                        if line_add == all_pfx_no_cmd:
-                            all_pfx_no_exists = True
-                            break
+                    if all_pfx_no_cmd in existing_entries:
+                        all_pfx_no_exists = True
                 if all_pfx_no_exists:
                     # If all prefix no command exists, just remove this specific entry deletion
                     lines_to_del_to_del.append((ctx_keys, line))
                 else:
                     # If no general command exists, add it
                     add_cmd = (all_pfx_no_cmd,)
-                    lines_to_add.append((add_cmd, None))
+                    new_entry = (add_cmd, None)
+                    # Check if this exact tuple already exists in lines_to_add
+                    if add_cmd[0] not in existing_entries:
+                        existing_entries.add(add_cmd[0])
+                        lines_to_add.append(new_entry)
                     lines_to_del_to_del.append((ctx_keys, None))
         # bgp community-list, large-community-list, extcommunity-list can be
         # specified without a seq number. However, the running config always
