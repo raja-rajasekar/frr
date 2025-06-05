@@ -1646,10 +1646,24 @@ def ignore_delete_re_add_lines(lines_to_add, lines_to_del):
             # (see comment above), add command with 'no' to lines_to_add and
             # remove from lines_to_del to improve scaling performance.
             if found is False:
-                add_cmd = ("no " + ctx_keys[0],)
-                lines_to_add.append((add_cmd, None))
-                lines_to_del_to_del.append((ctx_keys, None))
-
+                if re_acl_pfxlst.group(2) == "prefix-list":
+                    prefix_list_name = re_acl_pfxlst.group(3).strip()
+                    # Check if a all 'no prefix-list' command already exists
+                    all_pfx_no_cmd = f"no {re_acl_pfxlst.group(1)} {re_acl_pfxlst.group(2)} {prefix_list_name}"
+                    all_pfx_no_exists = False
+                    # Look through lines_to_add for the general no command
+                    for (ctx_keys_add, line_add) in lines_to_add:
+                        if line_add == all_pfx_no_cmd:
+                            all_pfx_no_exists = True
+                            break
+                if all_pfx_no_exists:
+                    # If all prefix no command exists, just remove this specific entry deletion
+                    lines_to_del_to_del.append((ctx_keys, line))
+                else:
+                    # If no general command exists, add it
+                    add_cmd = (all_pfx_no_cmd,)
+                    lines_to_add.append((add_cmd, None))
+                    lines_to_del_to_del.append((ctx_keys, None))
         # bgp community-list, large-community-list, extcommunity-list can be
         # specified without a seq number. However, the running config always
         # adds `seq X` (sequence number). So, ignore such lines as well.
