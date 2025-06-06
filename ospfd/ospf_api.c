@@ -469,6 +469,14 @@ struct msg *new_msg_register_event(uint32_t seqnum,
 	emsg->filter.num_areas = filter->num_areas;
 	if (len > sizeof(buf))
 		len = sizeof(buf);
+
+	/* Check for integer overflow when casting to uint16_t */
+	if (len > UINT16_MAX) {
+		zlog_warn("%s: Message length %u exceeds maximum allowed size %u",
+			  __func__, len, UINT16_MAX);
+		len = UINT16_MAX;
+	}
+
 	/* API broken - missing memcpy to fill data */
 	return msg_new(MSG_REGISTER_EVENT, emsg, seqnum, len);
 }
@@ -487,6 +495,14 @@ struct msg *new_msg_sync_lsdb(uint32_t seqnum, struct lsa_filter_type *filter)
 	smsg->filter.num_areas = filter->num_areas;
 	if (len > sizeof(buf))
 		len = sizeof(buf);
+
+	/* Check for integer overflow when casting to uint16_t */
+	if (len > UINT16_MAX) {
+		zlog_warn("%s: Message length %u exceeds maximum allowed size %u",
+			  __func__, len, UINT16_MAX);
+		len = UINT16_MAX;
+	}
+
 	/* API broken - missing memcpy to fill data */
 	return msg_new(MSG_SYNC_LSDB, smsg, seqnum, len);
 }
@@ -513,6 +529,12 @@ struct msg *new_msg_originate_request(uint32_t seqnum, struct in_addr ifaddr,
 	memcpy(omsg_data, data, omsglen);
 	omsglen += sizeof(struct msg_originate_request)
 		   - sizeof(struct lsa_header);
+
+	if (omsglen > UINT16_MAX) {
+		zlog_warn("%s: LSA specified is bigger than maximum LSA size, something is wrong",
+			  __func__);
+		omsglen = UINT16_MAX;
+	}
 
 	return msg_new(MSG_ORIGINATE_REQUEST, omsg, seqnum, omsglen);
 }
@@ -639,6 +661,12 @@ struct msg *new_msg_lsa_change_notify(uint8_t msgtype, uint32_t seqnum,
 	memcpy(nmsg_data, data, len);
 	len += sizeof(struct msg_lsa_change_notify) - sizeof(struct lsa_header);
 
+	if (len > UINT16_MAX) {
+		zlog_warn("%s: LSA specified is bigger than maximum LSA size, something is wrong",
+			  __func__);
+		len = UINT16_MAX;
+	}
+
 	return msg_new(msgtype, nmsg, seqnum, len);
 }
 
@@ -665,6 +693,12 @@ struct msg *new_msg_reachable_change(uint32_t seqnum, uint16_t nadd,
 	nmsg->nadd = htons(nadd);
 	nmsg->nremove = htons(nremove);
 	len = sizeof(*nmsg) + insz * (nadd + nremove);
+
+	if (len > UINT16_MAX) {
+		zlog_warn("%s: LSA specified is bigger than maximum LSA size, something is wrong",
+			  __func__);
+		len = UINT16_MAX;
+	}
 
 	return msg_new(MSG_REACHABLE_CHANGE, nmsg, seqnum, len);
 }

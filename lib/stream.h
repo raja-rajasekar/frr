@@ -417,7 +417,7 @@ static inline uint8_t *ptr_get_be16(uint8_t *ptr, uint16_t *out)
  */
 #define STREAM_GETC(S, P)                                                      \
 	do {                                                                   \
-		uint8_t _pval;                                                 \
+		uint8_t _pval = 0;                                             \
 		if (!stream_getc2((S), &_pval))                                \
 			goto stream_failure;                                   \
 		(P) = _pval;                                                   \
@@ -425,7 +425,7 @@ static inline uint8_t *ptr_get_be16(uint8_t *ptr, uint16_t *out)
 
 #define STREAM_GETW(S, P)                                                      \
 	do {                                                                   \
-		uint16_t _pval;                                                \
+		uint16_t _pval = 0;                                            \
 		if (!stream_getw2((S), &_pval))                                \
 			goto stream_failure;                                   \
 		(P) = _pval;                                                   \
@@ -433,7 +433,7 @@ static inline uint8_t *ptr_get_be16(uint8_t *ptr, uint16_t *out)
 
 #define STREAM_GETL(S, P)                                                      \
 	do {                                                                   \
-		uint32_t _pval;                                                \
+		uint32_t _pval = 0;                                            \
 		if (!stream_getl2((S), &_pval))                                \
 			goto stream_failure;                                   \
 		(P) = _pval;                                                   \
@@ -444,7 +444,7 @@ static inline uint8_t *ptr_get_be16(uint8_t *ptr, uint16_t *out)
 		union {                                                        \
 			float r;                                               \
 			uint32_t d;                                            \
-		} _pval;                                                       \
+		} _pval = {0};                                                \
 		if (!stream_getl2((S), &_pval.d))                              \
 			goto stream_failure;                                   \
 		(P) = _pval.r;                                                 \
@@ -452,7 +452,7 @@ static inline uint8_t *ptr_get_be16(uint8_t *ptr, uint16_t *out)
 
 #define STREAM_GETQ(S, P)                                                      \
 	do {                                                                   \
-		uint64_t _pval;                                                \
+		uint64_t _pval = 0;                                            \
 		if (!stream_getq2((S), &_pval))                                \
 			goto stream_failure;                                   \
 		(P) = _pval;                                                   \

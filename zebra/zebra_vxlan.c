@@ -573,12 +573,8 @@ static void zevpn_print_mac_hash_all_evpn_detail(struct hash_bucket *bucket,
 
 	if (json) {
 		vty_out(vty, "\"numMacs\":%u", num_macs);
-		if (num_macs) {
-			vty_out(vty, ",\"macs\":");
-			vty_json_no_pretty(vty, json_mac);
-		} else
-			json_object_free(json_mac);
-
+		vty_out(vty, ",\"macs\":");
+		vty_json_no_pretty(vty, json_mac);
 		vty_out(vty, "}\n");
 	}
 }

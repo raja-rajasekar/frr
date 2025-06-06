@@ -937,9 +937,9 @@ void pim_rp_setup(struct pim_instance *pim)
 		if (!pim_ecmp_nexthop_lookup(pim, &rp_info->rp.source_nexthop,
 					     nht_p, &rp_info->group, 1)) {
 			if (PIM_DEBUG_PIM_NHT_RP)
-				zlog_debug(
-					"Unable to lookup nexthop for rp specified");
-			pim_rp_nexthop_del(rp_info);
+				zlog_debug("%s: unable to lookup nexthop for rp %pPA", __func__,
+					   &rp_info->rp.rpf_addr);
+                        pim_rp_nexthop_del(rp_info);
 		}
 	}
 }
@@ -1080,8 +1080,12 @@ struct pim_rpf *pim_rp_g(struct pim_instance *pim, pim_addr group)
 				__func__, &nht_p, &rp_info->group);
 		pim_find_or_track_nexthop(pim, nht_p, NULL, rp_info, NULL);
 		pim_rpf_set_refresh_time(pim);
-		(void)pim_ecmp_nexthop_lookup(pim, &rp_info->rp.source_nexthop,
-					      nht_p, &rp_info->group, 1);
+		if (!pim_ecmp_nexthop_lookup(pim, &rp_info->rp.source_nexthop,
+					      nht_p, &rp_info->group, 1))
+			if (PIM_DEBUG_PIM_NHT_RP)
+				zlog_debug("%s: unable to lookup nexthop for rp %pPA", __func__,
+					   &rp_info->rp.rpf_addr);
+
 		return (&rp_info->rp);
 	}
 

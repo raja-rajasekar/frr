@@ -1277,7 +1277,7 @@ int bgp_clear(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t safi, enum cle
 
 	/* Clear all neighbors belonging to a specific AS. */
 	if (sort == clear_as) {
-		as_t as;
+		as_t as = 0;
 
 		if (!asn_str2asn(arg, &as)) {
 			vty_out(vty, "%% BGP: No such AS %s\n", arg);
@@ -1553,8 +1553,8 @@ DEFUN_NOSH (router_bgp,
 	int idx_asnotation_kind = 4;
 	enum asnotation_mode asnotation = ASNOTATION_UNDEFINED;
 	int ret;
-	as_t as;
-	struct bgp *bgp;
+	as_t as = 0;
+	struct bgp *bgp = NULL;
 	const char *name = NULL;
 	enum bgp_instance_type inst_type;
 
@@ -1689,8 +1689,8 @@ DEFUN (no_router_bgp,
 {
 	int idx_asn = 3;
 	int idx_vrf = 5;
-	as_t as;
-	struct bgp *bgp;
+	as_t as = 0;
+	struct bgp *bgp = NULL;
 	const char *name = NULL;
 
 	// "no router bgp" without an ASN
@@ -2071,7 +2071,7 @@ DEFUN (bgp_confederation_identifier,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int idx_number = 3;
-	as_t as;
+	as_t as = 0;
 
 	if (!asn_str2asn(argv[idx_number]->arg, &as)) {
 		vty_out(vty, "%% BGP: No such AS %s\n", argv[idx_number]->arg);
@@ -2108,7 +2108,7 @@ DEFUN (bgp_confederation_peers,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int idx_asn = 3;
-	as_t as;
+	as_t as = 0;
 	int i;
 
 	for (i = idx_asn; i < argc; i++) {
@@ -2134,7 +2134,7 @@ DEFUN (no_bgp_confederation_peers,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int idx_asn = 4;
-	as_t as;
+	as_t as = 0;
 	int i;
 
 	for (i = idx_asn; i < argc; i++) {
@@ -3786,6 +3786,9 @@ static int bgp_peer_gshut_reset(struct vty *vty, const char *peer_str, enum clea
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 
 	peer = peer_and_group_lookup_vty(vty, peer_str);
+	if (!peer)
+		return CMD_WARNING_CONFIG_FAILED;
+
 	bgp_clear(vty, bgp, AFI_UNSPEC, SAFI_UNSPEC, sort, BGP_CLEAR_SOFT_IN, peer_str);
 
 	if (sort == clear_group) {
@@ -5133,7 +5136,7 @@ static int peer_remote_as_vty(struct vty *vty, const char *peer_str,
 {
 	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int ret;
-	as_t as;
+	as_t as = 0;
 	int as_type = AS_SPECIFIED;
 	union sockunion su;
 
@@ -5693,7 +5696,7 @@ DEFUN (neighbor_local_as,
 	int idx_number = 3;
 	struct peer *peer;
 	int ret;
-	as_t as;
+	as_t as = 0;
 
 	peer = peer_and_group_lookup_vty(vty, argv[idx_peer]->arg);
 	if (!peer)
@@ -5722,7 +5725,7 @@ DEFUN (neighbor_local_as_no_prepend,
 	int idx_number = 3;
 	struct peer *peer;
 	int ret;
-	as_t as;
+	as_t as = 0;
 
 	peer = peer_and_group_lookup_vty(vty, argv[idx_peer]->arg);
 	if (!peer)
@@ -5752,7 +5755,7 @@ DEFUN (neighbor_local_as_no_prepend_replace_as,
 	int idx_number = 3;
 	struct peer *peer;
 	int ret;
-	as_t as;
+	as_t as = 0;
 
 	peer = peer_and_group_lookup_vty(vty, argv[idx_peer]->arg);
 	if (!peer)
@@ -5935,7 +5938,7 @@ DEFUN (neighbor_set_peer_group,
 	int idx_peer = 1;
 	int idx_word = 3;
 	int ret;
-	as_t as;
+	as_t as = 0;
 	union sockunion su;
 	struct peer *peer;
 	struct peer_group *group;
@@ -10708,12 +10711,6 @@ DEFPY(bgp_imexport_vrf, bgp_imexport_vrf_cmd,
 			SET_FLAG(vrf_bgp->flags, BGP_FLAG_INSTANCE_HIDDEN);
 		}
 
-		if (ret) {
-			vty_out(vty,
-				"VRF %s is not configured as a bgp instance\n",
-				import_name);
-			return CMD_WARNING;
-		}
 	}
 
 	if (remove) {
@@ -18688,6 +18685,10 @@ DEFPY(bgp_retain_route_target, bgp_retain_route_target_cmd,
 {
 	bool check;
 	struct bgp *bgp = VTY_GET_CONTEXT(bgp);
+
+	if (!bgp) {
+		return NULL;
+	}
 
 	check = CHECK_FLAG(bgp->af_flags[bgp_node_afi(vty)][bgp_node_safi(vty)],
 			   BGP_VPNVX_RETAIN_ROUTE_TARGET_ALL);
