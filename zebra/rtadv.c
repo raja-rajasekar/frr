@@ -1348,7 +1348,6 @@ static void rtadv_start_interface_events(struct zebra_vrf *zvrf,
 	adv_if = adv_if_add(zvrf, zif->ifp->name);
 	if (adv_if != NULL) {
 		rtadv_send_packet(zvrf->rtadv.sock, zif->ifp, RA_ENABLE);
-		wheel_add_item(zrouter.ra_wheel, zif->ifp);
 		return; /* Already added */
 	}
 
@@ -1536,12 +1535,16 @@ void rtadv_stop_ra(struct interface *ifp, bool if_down_event)
 {
 	struct zebra_if *zif;
 	struct zebra_vrf *zvrf;
+	struct adv_if *adv_if = NULL;
 
 	/*Try to delete from ra wheels */
 	wheel_remove_item(zrouter.ra_wheel, ifp);
 
 	zif = ifp->info;
 	zvrf = rtadv_interface_get_zvrf(ifp);
+	adv_if = adv_if_del(zvrf, ifp->name);
+	if (adv_if != NULL)
+		adv_if_free(adv_if);
 
 	/*Turn off event for ICMPv6 join*/
 	EVENT_OFF(zif->icmpv6_join_timer);
