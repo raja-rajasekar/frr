@@ -710,7 +710,7 @@ static int dnode_create(struct nb_config *candidate, const char *xpath,
 			const char *value, uint32_t options,
 			struct lyd_node **new_dnode)
 {
-	struct lyd_node *dnode;
+	struct lyd_node *dnode = NULL;
 	LY_ERR err;
 
 	err = lyd_new_path(candidate->dnode, ly_native_ctx, xpath, value,
@@ -2317,6 +2317,14 @@ int nb_oper_data_iterate(const char *xpath, struct yang_translator *translator, 
 		nxpath = lyd_path((struct lyd_node *)dn, LYD_PATH_STD, NULL, 0);
 		DEBUGD(&nb_dbg_events, "Dnode xpath %s", nxpath);
 		nn = nb_node_find(nxpath);
+		if (!nn) {
+			flog_warn(EC_LIB_YANG_UNKNOWN_DATA_PATH, "%s: unknown data path node: %s", __func__,
+				  nxpath);
+			list_delete(&list_dnodes);
+			yang_dnode_free(dnode);
+			return NB_ERR;
+		}
+
 		if (!nn->cbs.lookup_entry) {
 			flog_warn(EC_LIB_NB_OPERATIONAL_DATA,
 				  "%s: data path doesn't support iteration over operational data: %s",
@@ -2533,9 +2541,9 @@ DEFINE_HOOK(nb_notification_send, (const char *xpath, struct list *arguments),
 int nb_notification_send(const char *xpath, struct list *arguments)
 {
 	struct lyd_node *root = NULL;
-	struct lyd_node *dnode;
-	struct yang_data *data;
-	struct listnode *ln;
+	struct lyd_node *dnode = NULL;
+	struct yang_data *data = NULL;
+	struct listnode *ln = NULL;
 	LY_ERR err;
 	int ret;
 

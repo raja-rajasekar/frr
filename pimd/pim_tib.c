@@ -36,8 +36,12 @@ tib_sg_oil_setup(struct pim_instance *pim, pim_sgaddr sg, struct interface *oif)
 	if (up) {
 		memcpy(&nexthop, &up->rpf.source_nexthop,
 		       sizeof(struct pim_nexthop));
-		(void)pim_ecmp_nexthop_lookup(pim, &nexthop, vif_source, &grp,
-					      0);
+		if (!pim_ecmp_nexthop_lookup(pim, &nexthop, vif_source, &grp,
+					      0))
+			if (PIM_DEBUG_PIM_NHT_RP)
+				zlog_debug("%s: Nexthop Lookup failed vif_src:%pPA, sg.src:%pPA, sg.grp:%pPA",
+					   __func__, &vif_source, &sg.src, &sg.grp);
+
 		if (nexthop.interface)
 			input_iface_vif_index = pim_if_find_vifindex_by_ifindex(
 				pim, nexthop.interface->ifindex);

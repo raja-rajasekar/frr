@@ -506,6 +506,12 @@ static void do_show_srv6_sid_specific(struct vty *vty, json_object **json,
 	if (json) {
 		do_show_srv6_sid_json(vty, json, locator, sid_ctx);
 	} else {
+		if (!sid_ctx || !sid_ctx->sid)
+			return;
+
+		if (locator && sid_ctx->sid->locator != locator)
+			return;
+
 		/* Prepare table. */
 		tt = ttable_new(&ttable_styles[TTSTYLE_BLANK]);
 
@@ -515,12 +521,6 @@ static void do_show_srv6_sid_specific(struct vty *vty, json_object **json,
 		tt->style.corner = ' ';
 		ttable_restyle(tt);
 		ttable_rowseps(tt, 0, BOTTOM, true, '-');
-
-		if (!sid_ctx || !sid_ctx->sid)
-			return;
-
-		if (locator && sid_ctx->sid->locator != locator)
-			return;
 
 		do_show_srv6_sid_line(tt, sid_ctx->sid);
 

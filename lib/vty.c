@@ -3810,7 +3810,7 @@ static int vty_mgmt_get_tree_result_notified(
 	size_t len, int partial_error)
 {
 	struct vty *vty;
-	struct lyd_node *dnode;
+	struct lyd_node *dnode = NULL;
 	int ret = CMD_SUCCESS;
 	LY_ERR err;
 
