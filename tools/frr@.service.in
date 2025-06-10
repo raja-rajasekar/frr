@@ -3,7 +3,7 @@ Description=FRRouting
 Documentation=https://frrouting.readthedocs.io/en/latest/setup.html
 Wants=network.target
 After=network-pre.target systemd-sysctl.service
-Before=network.target
+Before=network.target lttng-sessiond.service
 OnFailure=heartbeat-failed@%n
 
 [Service]

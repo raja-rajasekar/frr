@@ -30,7 +30,21 @@
 						<contexts/>
 					</channel>
 				</channels>
-				<trackers/>
+				<process_attr_trackers>
+					<vuid_process_attr_tracker>
+						<process_attr_values>
+							<vuid>
+								<name>root</name>
+							</vuid>
+							<vuid>
+								<name>frr</name>
+							</vuid>
+							<vuid>
+								<name>cumulus</name>
+							</vuid>
+						</process_attr_values>
+					</vuid_process_attr_tracker>
+				</process_attr_trackers>
 			</domain>
 			<domain>
 				<type>JUL</type>
