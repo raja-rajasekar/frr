@@ -334,7 +334,13 @@ lib_vrf_peer_last_established_get_elem(struct nb_cb_get_elem_args *args)
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	return yang_data_new_uint64(args->xpath, time_to_epoch(peer->resettime));
+	time_t uptime;
+	time_t epoch_tbuf;
+
+	uptime = monotime(NULL);
+	uptime -= peer->uptime;
+	epoch_tbuf = time(NULL) - uptime;
+	return yang_data_new_uint64(args->xpath, epoch_tbuf);
 }
 /*
  *  * XPath: /frr-bgp-peer:lib/vrf/peer/description
@@ -376,7 +382,7 @@ lib_vrf_peer_type_get_elem(struct nb_cb_get_elem_args *args){
 	if (!args || !args->list_entry)
 		return NULL;
 	peer = (struct peer *)args->list_entry;
-	if(!peer->sort)
+	if (!peer->sort)
 		return yang_data_new_string(args->xpath, "");
 	return yang_data_new_string(args->xpath, yang_peer_type2str(peer->sort));
 }
