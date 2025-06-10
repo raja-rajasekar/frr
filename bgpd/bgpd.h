@@ -2019,13 +2019,12 @@ DECLARE_QOBJ_TYPE(peer);
 	} while (0)
 
 /* Check if suppress start/restart of sessions to peer. */
-#define BGP_PEER_START_SUPPRESSED(P)                                           \
-	(CHECK_FLAG((P)->flags, PEER_FLAG_SHUTDOWN) ||                         \
-	 CHECK_FLAG((P)->sflags, PEER_STATUS_PREFIX_OVERFLOW) ||               \
-	 CHECK_FLAG((P)->bgp->flags, BGP_FLAG_SHUTDOWN) ||                     \
-	 (P)->shut_during_cfg ||                                               \
-	 (bgp_in_graceful_restart() &&                                         \
-	  !CHECK_FLAG(bm->flags, BM_FLAG_CONFIG_LOADED)))
+#define BGP_PEER_START_SUPPRESSED(P)                                                               \
+	(CHECK_FLAG((P)->flags, PEER_FLAG_SHUTDOWN) ||                                             \
+	 CHECK_FLAG((P)->sflags, PEER_STATUS_PREFIX_OVERFLOW) ||                                   \
+	 CHECK_FLAG((P)->bgp->flags, BGP_FLAG_SHUTDOWN) || (P)->shut_during_cfg ||                 \
+	 (bgp_in_graceful_restart() && !CHECK_FLAG(bm->flags, BM_FLAG_CONFIG_LOADED)) ||           \
+	 CHECK_FLAG(bm->flags, BM_FLAG_FAST_SHUTDOWN))
 
 #define PEER_ROUTE_ADV_DELAY(peer)					       \
 	(CHECK_FLAG(peer->thread_flags, PEER_THREAD_SUBGRP_ADV_DELAY))
