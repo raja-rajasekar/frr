@@ -125,9 +125,22 @@ int lib_vrf_peer_get_keys(struct nb_cb_get_keys_args *args)
 					sizeof(args->keys->key[0]));
 			else if (peer->host)
 				strlcpy(args->keys->key[0], peer->host, sizeof(args->keys->key[0]));
-			else
-				strlcpy(args->keys->key[0], &peer->connection->su,
-					sizeof(args->keys->key[0]));
+			else {
+				char buf[INET6_ADDRSTRLEN];
+				if (peer->connection->su.sa.sa_family == AF_INET) {
+					inet_ntop(AF_INET,
+						  &peer->connection->su.sin.sin_addr, buf,
+						  sizeof(buf));
+					strlcpy(args->keys->key[0], buf,
+						sizeof(args->keys->key[0]));
+				} else if (peer->connection->su.sa.sa_family == AF_INET6) {
+					if (inet_ntop(AF_INET6, &peer->connection->su.sin6.sin6_addr, buf, INET6_ADDRSTRLEN) == NULL) {
+						return NB_ERR;
+					}
+					strlcpy(args->keys->key[0], buf,
+						sizeof(args->keys->key[0]));
+				}
+			}
 		}
 		DEBUGD(&nb_dbg_events, "Peer name %s", args->keys->key[0]);
 	}
@@ -285,6 +298,140 @@ struct yang_data *lib_vrf_peer_total_msgs_recvd_get_elem(struct nb_cb_get_elem_a
 		return NULL;
 	peer = (struct peer *)args->list_entry;
 	return yang_data_new_uint32(args->xpath, PEER_TOTAL_RX(peer));
+}
+
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/local-as
+ *   */
+struct yang_data *
+lib_vrf_peer_local_as_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->local_as);
+}
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/peer-as
+ *   */
+struct yang_data *
+lib_vrf_peer_as_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	return yang_data_new_uint32(args->xpath, peer->as);
+}
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/last-established
+ *   */
+struct yang_data *
+lib_vrf_peer_last_established_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	time_t uptime;
+	time_t epoch_tbuf;
+
+	uptime = monotime(NULL);
+	uptime -= peer->uptime;
+	epoch_tbuf = time(NULL) - uptime;
+	return yang_data_new_uint64(args->xpath, epoch_tbuf);
+}
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/description
+ *   */
+struct yang_data *
+lib_vrf_peer_description_get_elem(struct nb_cb_get_elem_args *args)
+{
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (peer->desc == NULL){
+		return yang_data_new_string(args->xpath, "");
+	}
+	return yang_data_new_string(args->xpath, peer->desc);
+}
+
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/peer-group
+ *   */
+struct yang_data *
+lib_vrf_peer_group_get_elem(struct nb_cb_get_elem_args *args){
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (peer->group == NULL){
+		return yang_data_new_string(args->xpath, "");
+	}
+	return yang_data_new_string(args->xpath, peer->group->name);
+}
+
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/peer-type
+ *   */
+struct yang_data *
+lib_vrf_peer_type_get_elem(struct nb_cb_get_elem_args *args){
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (!peer->sort)
+		return yang_data_new_string(args->xpath, "");
+	return yang_data_new_string(args->xpath, yang_peer_type2str(peer->sort));
+}
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/neighbor-address
+ *   */
+struct yang_data *
+lib_vrf_peer_neighbor_address_get_elem(struct nb_cb_get_elem_args *args){
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (peer->connection->su.sa.sa_family == AF_INET) {
+		return yang_data_new_string(args->xpath, inet_ntoa(peer->connection->su.sin.sin_addr));
+	} else if (peer->connection->su.sa.sa_family == AF_INET6) {
+		char addr_str[INET6_ADDRSTRLEN];
+		if (inet_ntop(AF_INET6, &peer->connection->su.sin6.sin6_addr, addr_str, INET6_ADDRSTRLEN) == NULL) {
+			return yang_data_new_string(args->xpath, "");
+		}
+		return yang_data_new_string(args->xpath, addr_str);
+	}
+	return yang_data_new_string(args->xpath, "");
+}
+
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/messages/sent/last-notification-error-code
+ *   */
+struct yang_data *
+lib_vrf_peer_messages_sent_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *args){
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (!peer->notify.code_sent)
+		return yang_data_new_string(args->xpath, "");
+	return yang_data_new_string(args->xpath, yang_bgp_notify_code2str(peer->notify.code_sent));
+}
+/*
+ *  * XPath: /frr-bgp-peer:lib/vrf/peer/messages/received/last-notification-error-code
+ *   */
+struct yang_data *
+lib_vrf_peer_messages_received_last_notification_error_code_get_elem(struct nb_cb_get_elem_args *args){
+	struct peer *peer;
+	if (!args || !args->list_entry)
+		return NULL;
+	peer = (struct peer *)args->list_entry;
+	if (!peer->notify.code_received)
+		return yang_data_new_string(args->xpath, "");
+	return yang_data_new_string(args->xpath, yang_bgp_notify_code2str(peer->notify.code_received));
 }
 
 /*
@@ -450,18 +597,72 @@ const struct frr_yang_module_info frr_bgp_peer_info = {
 			}
 		},
 		{
-			.xpath = "/frr-bgp-peer:lib/vrf/peer/tx-updates",
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/messages/sent/updates",
 			.cbs = {
 				.get_elem = lib_vrf_peer_tx_updates_get_elem,
 			}
 		},
 		{
-			.xpath = "/frr-bgp-peer:lib/vrf/peer/rx-updates",
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/messages/received/updates",
 			.cbs = {
 				.get_elem = lib_vrf_peer_rx_updates_get_elem,
 			}
 		},
-                                {
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/local-as",
+			.cbs = {
+				.get_elem = lib_vrf_peer_local_as_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/peer-as",
+			.cbs = {
+				.get_elem = lib_vrf_peer_as_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/last-established",
+			.cbs = {
+				.get_elem = lib_vrf_peer_last_established_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/description",
+			.cbs = {
+				.get_elem = lib_vrf_peer_description_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/peer-group",
+			.cbs = {
+				.get_elem = lib_vrf_peer_group_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/peer-type",
+			.cbs = {
+				.get_elem = lib_vrf_peer_type_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/neighbor-address",
+			.cbs = {
+				.get_elem = lib_vrf_peer_neighbor_address_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/messages/sent/last-notification-error-code",
+			.cbs = {
+				.get_elem = lib_vrf_peer_messages_sent_last_notification_error_code_get_elem,
+			}
+		},
+		{
+			.xpath = "/frr-bgp-peer:lib/vrf/peer/messages/received/last-notification-error-code",
+			.cbs = {
+				.get_elem = lib_vrf_peer_messages_received_last_notification_error_code_get_elem,
+			}
+		},
+                {
                         .xpath = "/frr-bgp-peer:lib/vrf/peer/afi-safi",
                         .cbs = {
                                 .get_next = lib_vrf_peer_afi_safi_get_next,

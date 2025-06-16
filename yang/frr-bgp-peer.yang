@@ -69,17 +69,62 @@ module frr-bgp-peer {
             description
                "Output buffer queue";
           }
-          leaf tx-updates {
+          leaf local-as {
             config false;
             type uint32;
             description
-               "Messages Sent";
+                "Local Autonomous System Number";
           }
-          leaf rx-updates {
+          leaf peer-as {
             config false;
             type uint32;
             description
-               "Messages Recieved";
+                "AS Number of BGP peer";
+          }
+          leaf last-established {
+            config false;
+            type uint64;
+            description
+                "Last Established Time";
+          }
+          leaf description {
+            config false;
+            type string;
+            description
+                "Description of peer";
+          }
+          leaf peer-group {
+            config false;
+            type string;
+            description
+                "Name of peer-group";
+          }
+          leaf peer-type {
+            config false;
+            type string;
+            description
+                "Type of peer";
+          }
+          leaf neighbor-address {
+            config false;
+            type string;
+            description
+                "IP Address of BGP peer";
+          }
+          container messages {
+            description
+              "Counters for BGP messages sent and received from the
+              neighbor";
+            container sent {
+              description
+                "Counters relating to BGP messages sent to the neighbor";
+              uses bgp-peer-message;
+            }
+            container received {
+              description
+                "Counters for BGP messages received from the neighbor";
+              uses bgp-peer-message;
+            }
           }
           list afi-safi {
             config false;
@@ -136,6 +181,20 @@ module frr-bgp-peer {
                "Total messages recieved";
           }
       }
+    }
+  }
+  grouping bgp-peer-message{
+    leaf last-notification-error-code{
+      config false;
+      type string;
+      description
+          "Error sent or received on peering session";
+    }
+    leaf updates {
+      config false;
+      type uint32;
+      description
+          "Update Messages sent/recieved";
     }
   }
 }
