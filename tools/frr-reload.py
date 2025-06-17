@@ -2245,6 +2245,9 @@ def compare_context_objects(newconf, running):
                 # Skip top-level key line if nothing to add
                 if len(temp_lines) == 0:
                     need_key = False
+            elif (newconf_ctx_keys[0].startswith("ip prefix-list") or
+                  newconf_ctx_keys[0].startswith("ipv6 prefix-list")):
+                need_key = False  # Skip readding prefix-list entries
 
             # Add key line(s), if needed
             if need_key:
