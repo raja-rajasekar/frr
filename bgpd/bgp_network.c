@@ -900,6 +900,8 @@ static int bgp_listener(int sock, struct sockaddr *sa, socklen_t salen,
 {
 	struct bgp_listener *listener;
 	int ret, en;
+	struct listnode *node, *nnode;
+	struct peer_group *group;
 
 	sockopt_reuseaddr(sock);
 	sockopt_reuseport(sock);
@@ -943,6 +945,31 @@ static int bgp_listener(int sock, struct sockaddr *sa, socklen_t salen,
 		       &listener->thread);
 	listnode_add(bm->listen_sockets, listener);
 
+	frr_with_privs(&bgpd_privs) {
+		for (ALL_LIST_ELEMENTS(bgp->group, node, nnode, group)) {
+			struct listnode *ln;
+			struct prefix *lr;
+			union sockunion su;
+			struct peer *peer = group->conf;
+
+			for (ALL_LIST_ELEMENTS_RO(group->listen_range[AFI_IP], ln, lr)) {
+				if (peer && peer->password) {
+					prefix2sockunion(lr, &su);
+					ret = bgp_md5_set_socket(listener->fd, &su,
+								 lr->prefixlen,
+								 peer->password);
+				}
+			}
+			for (ALL_LIST_ELEMENTS_RO(group->listen_range[AFI_IP6], ln, lr)) {
+				if (peer && peer->password) {
+					prefix2sockunion(lr, &su);
+					ret = bgp_md5_set_socket(listener->fd, &su,
+								 lr->prefixlen,
+								 peer->password);
+				}
+			}
+		}
+	}
 	return 0;
 }
 
