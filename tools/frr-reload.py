@@ -1900,6 +1900,14 @@ def static_route_already_present(lines_to_add, testline):
     return False
 
 
+def is_srv6_locators_context(ctx_keys):
+    """Check if context keys match SRv6 locators pattern."""
+    return (len(ctx_keys) >= 3
+            and ctx_keys[0].startswith("segment-routing")
+            and ctx_keys[1].startswith("srv6")
+            and ctx_keys[2] == "locators")
+
+
 def ignore_unconfigurable_lines(lines_to_add, lines_to_del):
     """
     There are certain commands that cannot be removed.  Remove
@@ -2116,6 +2124,38 @@ def compare_context_objects(newconf, running):
                 and running_ctx_keys[0].startswith("segment-routing")
                 and running_ctx_keys[2].startswith("pcep")
             ):
+                continue
+
+            # Handle SRv6 locators specially - only delete if explicitly removed in new config
+            elif (
+                len(running_ctx_keys) == 4
+                and is_srv6_locators_context(running_ctx_keys)
+            ):
+                # This is a specific locator context - check if config has changed
+                locator_name = running_ctx_keys[3]
+                locator_exists_in_new = False
+                # Check if this exact locator exists in new config
+                for ctx_keys in newconf.contexts.keys():
+                    if (len(ctx_keys) >= 4
+                        and is_srv6_locators_context(ctx_keys)
+                        and ctx_keys[3] == locator_name):
+                        locator_exists_in_new = True
+                        new_ctx = newconf.contexts[ctx_keys]
+
+                        # If config differs, allow deletion for re-addition
+                        if running_ctx.lines != new_ctx.lines:
+                            lines_to_del.append((running_ctx_keys, None))
+                        break
+
+                if not locator_exists_in_new:
+                    lines_to_del.append((running_ctx_keys, None))
+            elif (
+                len(running_ctx_keys) >= 3
+                and running_ctx_keys[0].startswith("segment-routing")
+                and running_ctx_keys[1].startswith("srv6")
+                and running_ctx_keys[2] == "locators"
+            ):
+                # This is the "locators" context itself or deeper nested - skip
                 continue
 
             # Segment lists can only be deleted after we removed all the candidate paths that
