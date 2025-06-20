@@ -2016,9 +2016,10 @@ TRACEPOINT_EVENT(
 	frr_zebra,
     srv6_manager_release_sid_internal,
 	TP_ARGS(
-        const char*, ctx_str),
+        const char*, ctx_str, const char*, locator_name),
 	TP_FIELDS(
 		ctf_string(ctx_str, ctx_str)
+		ctf_string(locator_name, locator_name ? locator_name : "")
 		)
 	)
 
