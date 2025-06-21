@@ -4788,14 +4788,6 @@ static void bgp_process_internal(struct bgp *bgp, struct bgp_dest *dest,
 	if (CHECK_FLAG(dest->flags, BGP_NODE_SELECT_DEFER))
 		return;
 
-	if (CHECK_FLAG(dest->flags, BGP_NODE_SOFT_RECONFIG)) {
-		if (BGP_DEBUG(update, UPDATE_OUT))
-			zlog_debug(
-				"Soft reconfigure table in progress for route %p",
-				dest);
-		return;
-	}
-
 	/* all unlocked in process_subq_xxx functions */
 	bgp_table_lock(bgp_dest_table(dest));
 
