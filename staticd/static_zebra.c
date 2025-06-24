@@ -1099,7 +1099,10 @@ extern void static_zebra_release_srv6_sid(struct static_srv6_sid *sid)
 	}
 
 	/* remove the SRv6 SID from the zebra RIB */
-	ret = srv6_manager_release_sid(zclient, &ctx);
+	DEBUGD(&static_dbg_srv6,
+	       "%s: Releasing SRv6 SID associated with locator %s, behavior %u, sid %pI6", __func__,
+	       sid->locator_name, sid->behavior, &sid->addr.prefix);
+	ret = srv6_manager_release_sid(zclient, &ctx, sid->locator_name);
 	if (ret == ZCLIENT_SEND_FAILURE)
 		flog_err(EC_LIB_ZAPI_SOCKET, "zclient_send_get_srv6_sid() delete failed: %s",
 			 safe_strerror(errno));

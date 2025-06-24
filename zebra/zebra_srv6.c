@@ -68,7 +68,8 @@ DEFINE_HOOK(srv6_manager_get_sid,
 	     const char *locator_name),
 	    (sid, client, ctx, sid_value, locator_name));
 DEFINE_HOOK(srv6_manager_release_sid,
-	    (struct zserv *client, struct srv6_sid_ctx *ctx), (client, ctx));
+	    (struct zserv * client, struct srv6_sid_ctx *ctx, const char *locator_name),
+	    (client, ctx, locator_name));
 DEFINE_HOOK(srv6_manager_get_locator,
 	    (struct srv6_locator **locator, struct zserv *client,
 	     const char *locator_name),
@@ -114,10 +115,10 @@ void srv6_manager_get_sid_call(struct zebra_srv6_sid **sid,
 		  locator_name);
 }
 
-void srv6_manager_release_sid_call(struct zserv *client,
-				   struct srv6_sid_ctx *ctx)
+void srv6_manager_release_sid_call(struct zserv *client, struct srv6_sid_ctx *ctx,
+				   const char *locator_name)
 {
-	hook_call(srv6_manager_release_sid, client, ctx);
+	hook_call(srv6_manager_release_sid, client, ctx, locator_name);
 }
 
 void srv6_manager_get_locator_call(struct srv6_locator **locator,
@@ -1485,9 +1486,8 @@ static bool alloc_srv6_sid_func_dynamic(struct zebra_srv6_sid_block *block,
  * @return 0 if the function returned an existing SID and SID value has not changed,
  * 1 if a new SID has been allocated or the existing SID value has changed, -1 if an error occurred
  */
-static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid,
-				 struct srv6_sid_ctx *ctx,
-				 struct in6_addr *sid_value)
+static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid, struct srv6_sid_ctx *ctx,
+				 struct in6_addr *sid_value, const char *locator_name)
 {
 	struct zebra_srv6 *srv6 = zebra_srv6_get_default();
 	struct zebra_srv6_sid_ctx *s = NULL;
@@ -1501,13 +1501,29 @@ static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid,
 	if (!ctx || !sid_value)
 		return -1;
 
-	/* Check if we already have a SID associated with the provided context */
+	/*
+	 * This loop searches through all existing SID contexts to find one
+	 * that matches our criteria.
+	 * For explicit SIDs, we need to match both the context and locator.
+	 *
+	 * The search logic:
+	 * 1. First, check if the SID context matches (memcmp on ctx structure)
+	 * 2. If context matches, check if the locator also matches
+	 * 3. If both match, check if the SID value is the same
+	 *    - If same SID value: return existing SID (no need to allocate new one)
+	 *    - If different SID value: Error!!
+	 * 4. If no match found: continue searching or allocate new context later
+	 *
+	 * This prevents duplicate SID allocations ensuring unique zctx for sids.
+	 */
 	for (ALL_LIST_ELEMENTS_RO(srv6->sids, node, s)) {
 		if (memcmp(&s->ctx, ctx, sizeof(struct srv6_sid_ctx)) == 0) {
-			/*
-			 * If the context is already associated with a SID that has the same SID value, then
-			 * return the existing SID
-			 */
+			assert(s->sid != NULL);
+			if (s->sid->locator &&
+			    strncmp(s->sid->locator->name, locator_name, SRV6_LOCNAME_SIZE) != 0) {
+				continue;
+			}
+
 			if (sid_same(&s->sid->value, sid_value)) {
 				if (IS_ZEBRA_DEBUG_SRV6)
 					zlog_debug("%s: returning existing SRv6 SID %pI6 ctx %s",
@@ -1518,25 +1534,18 @@ static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid,
 
 				frrtrace(3, frr_zebra, get_srv6_sid_explicit,
 					 srv6_sid_ctx2str(buf, sizeof(buf), ctx), sid_value, 1);
-
 				*sid = s->sid;
-				return 0;
-			}
 
-			/*
-			 * It is not allowed to allocate an explicit SID for a given context if the context
-			 * is already associated with an explicit SID
-			if (s->sid->alloc_mode == SRV6_SID_ALLOC_MODE_EXPLICIT) {
+				return 0;
+			} else {
 				zlog_err("%s: cannot alloc SID %pI6 for ctx %s: ctx already associated with SID %pI6",
 					 __func__, sid_value,
 					 srv6_sid_ctx2str(buf, sizeof(buf),
 							  &s->ctx),
 					 &s->sid->value);
-				return -1;
-			}*/
 
-			zctx = s;
-			break;
+				return -1;
+			}
 		}
 	}
 
@@ -1548,16 +1557,17 @@ static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid,
 		return -1;
 	}
 
+	zctx = zebra_srv6_sid_ctx_alloc();
+	zctx->ctx = *ctx;
 	if (ctx->behavior == ZEBRA_SEG6_LOCAL_ACTION_END) {
-		zctx = zebra_srv6_sid_ctx_alloc();
-		zctx->ctx = *ctx;
-
 		*sid = zebra_srv6_sid_alloc(zctx, sid_value, locator, block, sid_func,
 					    SRV6_SID_ALLOC_MODE_EXPLICIT);
 		if (!(*sid)) {
 			flog_err(EC_ZEBRA_SM_CANNOT_ASSIGN_SID,
 				 "%s: failed to create SRv6 SID %s (%pI6)", __func__,
 				 srv6_sid_ctx2str(buf, sizeof(buf), ctx), sid_value);
+			zebra_srv6_sid_ctx_free(zctx);
+
 			return -1;
 		}
 		(*sid)->ctx = zctx;
@@ -1565,8 +1575,9 @@ static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid,
 		listnode_add(srv6->sids, zctx);
 
 		if (IS_ZEBRA_DEBUG_SRV6)
-			zlog_debug("%s: allocated explicit SRv6 SID %pI6 for context %s", __func__,
-				   &(*sid)->value, srv6_sid_ctx2str(buf, sizeof(buf), ctx));
+			zlog_debug("%s: allocated explicit SRv6 SID %pI6 for context %s (zctx=%p)",
+				   __func__, &(*sid)->value,
+				   srv6_sid_ctx2str(buf, sizeof(buf), ctx), zctx);
 
 		frrtrace(3, frr_zebra, get_srv6_sid_explicit,
 			 srv6_sid_ctx2str(buf, sizeof(buf), ctx), sid_value, 2);
@@ -1578,30 +1589,9 @@ static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid,
 	if (!alloc_srv6_sid_func_explicit(block, sid_func, sid_func_wide)) {
 		zlog_err("%s: invalid SM request arguments: failed to allocate SID function %u from block %pFX",
 			 __func__, sid_func, &block->prefix);
+		zebra_srv6_sid_ctx_free(zctx);
+
 		return -1;
-	}
-
-	if (!zctx) {
-		/* If we don't have a zebra SID context for this context, allocate a new one */
-		zctx = zebra_srv6_sid_ctx_alloc();
-		zctx->ctx = *ctx;
-	} else {
-		/*
-		 * If we already have a SID associated with this context, we need to
-		 * deallocate the current SID function before allocating the new one
-		 */
-		if (zctx->sid) {
-			if (IS_ZEBRA_DEBUG_SRV6)
-				zlog_debug("%s: ctx %s already associated with a dynamic SID %pI6, releasing dynamic SID",
-					   __func__,
-					   srv6_sid_ctx2str(buf, sizeof(buf),
-							    ctx),
-					   &zctx->sid->value);
-
-			release_srv6_sid_func_dynamic(block, zctx->sid->func);
-			zebra_srv6_sid_free(zctx->sid);
-			zctx->sid = NULL;
-		}
 	}
 
 	/* Allocate the SID to store SID information */
@@ -1611,16 +1601,18 @@ static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid,
 		flog_err(EC_ZEBRA_SM_CANNOT_ASSIGN_SID,
 			 "%s: failed to create SRv6 SID %s (%pI6)", __func__,
 			 srv6_sid_ctx2str(buf, sizeof(buf), ctx), sid_value);
+		zebra_srv6_sid_ctx_free(zctx);
+
 		return -1;
 	}
+
 	(*sid)->ctx = zctx;
 	zctx->sid = *sid;
 	listnode_add(srv6->sids, zctx);
 
 	if (IS_ZEBRA_DEBUG_SRV6)
-		zlog_debug("%s: allocated explicit SRv6 SID %pI6 for context %s",
-			   __func__, &(*sid)->value,
-			   srv6_sid_ctx2str(buf, sizeof(buf), ctx));
+		zlog_debug("%s: allocated explicit SRv6 SID %pI6 for context %s (zctx=%p)",
+			   __func__, &(*sid)->value, srv6_sid_ctx2str(buf, sizeof(buf), ctx), zctx);
 
 	frrtrace(3, frr_zebra, get_srv6_sid_explicit, srv6_sid_ctx2str(buf, sizeof(buf), ctx),
 		 sid_value, 3);
@@ -1761,14 +1753,18 @@ int get_srv6_sid(struct zebra_srv6_sid **sid, struct srv6_sid_ctx *ctx, struct i
 	struct interface *ifp;
 	struct zebra_if *zebra_if;
 
-	enum srv6_sid_alloc_mode alloc_mode =
-		(sid_value) ? SRV6_SID_ALLOC_MODE_EXPLICIT
-			    : SRV6_SID_ALLOC_MODE_DYNAMIC;
+	if (!locator_name) {
+		zlog_err("%s: invalid SM request arguments: missing SRv6 locator, necessary for SID allocation",
+			 __func__);
+		return -1;
+	}
 
+	enum srv6_sid_alloc_mode alloc_mode = (sid_value) ? SRV6_SID_ALLOC_MODE_EXPLICIT
+							  : SRV6_SID_ALLOC_MODE_DYNAMIC;
 	if (IS_ZEBRA_DEBUG_SRV6)
-		zlog_debug("%s: received SRv6 SID alloc request: SID ctx %s (%pI6), mode=%s",
-			   __func__, srv6_sid_ctx2str(buf, sizeof(buf), ctx),
-			   sid_value, srv6_sid_alloc_mode2str(alloc_mode));
+		zlog_debug("%s: received SRv6 SID alloc request: SID ctx %s (%pI6), mode=%s, locator %s",
+			   __func__, srv6_sid_ctx2str(buf, sizeof(buf), ctx), sid_value,
+			   srv6_sid_alloc_mode2str(alloc_mode), locator_name);
 
 	frrtrace(3, frr_zebra, get_srv6_sid, srv6_sid_ctx2str(buf, sizeof(buf), ctx), sid_value,
 		 locator_name);
@@ -1833,18 +1829,11 @@ int get_srv6_sid(struct zebra_srv6_sid **sid, struct srv6_sid_ctx *ctx, struct i
 			return -1;
 		}
 
-		ret = get_srv6_sid_explicit(sid, ctx, sid_value);
+		ret = get_srv6_sid_explicit(sid, ctx, sid_value, locator_name);
 	} else {
 		/*
 		 * Dynamic SID allocation: allocate any available SID value
 		 */
-
-		if (!locator_name) {
-			zlog_err("%s: invalid SM request arguments: missing SRv6 locator, necessary for dynamic allocation",
-				 __func__);
-			return -1;
-		}
-
 		locator = zebra_srv6_locator_lookup(locator_name);
 		if (!locator) {
 			zlog_err("%s: invalid SM request arguments: SRv6 locator '%s' does not exist",
@@ -2216,10 +2205,10 @@ int release_srv6_sid(struct zserv *client, struct zebra_srv6_sid_ctx *zctx)
 		return -1;
 
 	if (IS_ZEBRA_DEBUG_SRV6)
-		zlog_debug("%s: releasing SRv6 SID %pI6 associated with ctx %s (proto=%u, instance=%u)",
+		zlog_debug("%s: releasing SRv6 SID %pI6 associated with ctx %s (proto=%u, instance=%u) zctx=%p",
 			   __func__, &zctx->sid->value,
-			   srv6_sid_ctx2str(buf, sizeof(buf), &zctx->ctx),
-			   client->proto, client->instance);
+			   srv6_sid_ctx2str(buf, sizeof(buf), &zctx->ctx), client->proto,
+			   client->instance, zctx);
 
 	/* Ensures the SID is in use by the client */
 	if (!listnode_lookup(zctx->sid->client_list, client)) {
@@ -2232,10 +2221,10 @@ int release_srv6_sid(struct zserv *client, struct zebra_srv6_sid_ctx *zctx)
 	listnode_delete(zctx->sid->client_list, client);
 
 	if (IS_ZEBRA_DEBUG_SRV6)
-		zlog_debug("%s: released SRv6 SID %pI6 associated with ctx %s (proto=%u, instance=%u)",
+		zlog_debug("%s: released SRv6 SID %pI6 associated with ctx %s (proto=%u, instance=%u) zctx=%p",
 			   __func__, &zctx->sid->value,
-			   srv6_sid_ctx2str(buf, sizeof(buf), &zctx->ctx),
-			   client->proto, client->instance);
+			   srv6_sid_ctx2str(buf, sizeof(buf), &zctx->ctx), client->proto,
+			   client->instance, zctx);
 
 	frrtrace(5, frr_zebra, release_srv6_sid, &zctx->sid->value,
 		 srv6_sid_ctx2str(buf, sizeof(buf), &zctx->ctx), client->proto, client->instance,
@@ -2246,10 +2235,9 @@ int release_srv6_sid(struct zserv *client, struct zebra_srv6_sid_ctx *zctx)
 	 */
 	if (listcount(zctx->sid->client_list) == 0) {
 		if (IS_ZEBRA_DEBUG_SRV6)
-			zlog_debug("%s: SRv6 SID %pI6 associated with ctx %s is no longer in use, removing it from SRv6 database",
+			zlog_debug("%s: SRv6 SID %pI6 associated with ctx %s is no longer in use, removing it from SRv6 database (zctx=%p)",
 				   __func__, &zctx->sid->value,
-				   srv6_sid_ctx2str(buf, sizeof(buf),
-						    &zctx->ctx));
+				   srv6_sid_ctx2str(buf, sizeof(buf), &zctx->ctx), zctx);
 
 		if (!(zctx->sid->block->sid_format &&
 		      zctx->sid->block->sid_format->type ==
@@ -2451,30 +2439,42 @@ int release_daemon_srv6_sids(struct zserv *client)
  * @param ctx Context associated with the SRv6 SID
  * @return 0 on success, -1 on failure
  */
-static int srv6_manager_release_sid_internal(struct zserv *client,
-					     struct srv6_sid_ctx *ctx)
+static int srv6_manager_release_sid_internal(struct zserv *client, struct srv6_sid_ctx *ctx,
+					     const char *locator_name)
 {
 	int ret = -1;
 	struct zebra_srv6 *srv6 = zebra_srv6_get_default();
 	struct zebra_srv6_sid_ctx *zctx;
 	struct listnode *node, *nnode;
 	char buf[256];
-	const char *locator_name = NULL;
 	struct in6_addr sid_value = {};
 
 	if (IS_ZEBRA_DEBUG_SRV6)
-		zlog_debug("%s: releasing SRv6 SID associated with ctx %s",
-			   __func__, srv6_sid_ctx2str(buf, sizeof(buf), ctx));
+		zlog_debug("%s: releasing SRv6 SID associated with ctx %s, locator %s", __func__,
+			   srv6_sid_ctx2str(buf, sizeof(buf), ctx), locator_name);
 
-	frrtrace(1, frr_zebra, srv6_manager_release_sid_internal,
-		 srv6_sid_ctx2str(buf, sizeof(buf), ctx));
+	frrtrace(2, frr_zebra, srv6_manager_release_sid_internal,
+		 srv6_sid_ctx2str(buf, sizeof(buf), ctx), locator_name);
+
+	/* For explicit SIDs, we require a locator name */
+	if (!locator_name) {
+		zlog_err("%s: locator name is required for explicit SID release", __func__);
+		zsend_srv6_sid_notify(client, ctx, &sid_value, 0, 0, NULL,
+				      ZAPI_SRV6_SID_FAIL_RELEASE);
+		return -1;
+	}
 
 	/* Lookup Zebra SID context and release it */
 	for (ALL_LIST_ELEMENTS(srv6->sids, node, nnode, zctx))
 		if (memcmp(&zctx->ctx, ctx, sizeof(struct srv6_sid_ctx)) == 0) {
+			/* For explicit SIDs, we need to match both context and locator */
+			if (zctx->sid && zctx->sid->locator) {
+				if (strncmp(zctx->sid->locator->name, locator_name,
+					    SRV6_LOCNAME_SIZE) != 0) {
+					continue;
+				}
+			}
 			if (zctx->sid) {
-				if (zctx->sid->locator)
-					locator_name = (const char *)zctx->sid->locator->name;
 				sid_value = zctx->sid->value;
 			}
 			ret = release_srv6_sid(client, zctx);

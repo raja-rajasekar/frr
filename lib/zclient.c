@@ -3439,7 +3439,8 @@ int srv6_manager_get_sid(struct zclient *zclient, const struct srv6_sid_ctx *ctx
 		len = strlen(locator_name);
 		stream_putw(s, len);
 		stream_put(s, locator_name, len);
-	}
+	} else
+		stream_putw(s, 0);
 
 	/* Put length at the first point of the stream. */
 	stream_putw_at(s, 0, stream_get_endp(s));
@@ -3455,8 +3456,8 @@ int srv6_manager_get_sid(struct zclient *zclient, const struct srv6_sid_ctx *ctx
  * @param ctx Context associated with the SRv6 SID to be removed
  * @result 0 on success, -1 otherwise
  */
-int srv6_manager_release_sid(struct zclient *zclient,
-			     const struct srv6_sid_ctx *ctx)
+int srv6_manager_release_sid(struct zclient *zclient, const struct srv6_sid_ctx *ctx,
+			     const char *locator_name)
 {
 	struct stream *s;
 	char buf[256];
@@ -3468,8 +3469,8 @@ int srv6_manager_release_sid(struct zclient *zclient,
 	}
 
 	if (zclient_debug)
-		zlog_debug("Releasing SRv6 SID: %s",
-			   srv6_sid_ctx2str(buf, sizeof(buf), ctx));
+		zlog_debug("Releasing SRv6 SID: %s, locator: %s",
+			   srv6_sid_ctx2str(buf, sizeof(buf), ctx), locator_name);
 
 	/* send request */
 	s = zclient->obuf;
@@ -3480,6 +3481,14 @@ int srv6_manager_release_sid(struct zclient *zclient,
 
 	/* Context associated with the SRv6 SID */
 	stream_put(s, ctx, sizeof(struct srv6_sid_ctx));
+
+	/* Locator name */
+	if (locator_name) {
+		size_t len = strlen(locator_name);
+		stream_putw(s, len);
+		stream_put(s, locator_name, len);
+	} else
+		stream_putw(s, 0);
 
 	/* Put length at the first point of the stream. */
 	stream_putw_at(s, 0, stream_get_endp(s));

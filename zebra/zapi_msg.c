@@ -3162,15 +3162,31 @@ static void zread_srv6_manager_release_srv6_sid(struct zserv *client,
 {
 	struct stream *s;
 	struct srv6_sid_ctx ctx = {};
+	char locator_name[SRV6_LOCNAME_SIZE] = { 0 };
 
-	/* Get input stream */
 	s = msg;
 
-	/* Get data */
+	/* Get context associated with the SRv6 SID */
 	STREAM_GET(&ctx, s, sizeof(struct srv6_sid_ctx));
 
+	/* Get locator name */
+	if (STREAM_READABLE(s)) {
+		uint16_t len;
+		STREAM_GETW(s, len);
+		if (len > SRV6_LOCNAME_SIZE) {
+			zlog_warn("Received locator name length (%u) exceeds maximum length (%u)",
+				  len, SRV6_LOCNAME_SIZE);
+			goto stream_failure;
+		}
+		if (len > 0) {
+			STREAM_GET(locator_name, s, len);
+			locator_name[len] = '\0';
+		} else
+			locator_name[0] = '\0';
+	}
+
 	/* Call hook to release a SID using wrapper */
-	srv6_manager_release_sid_call(client, &ctx);
+	srv6_manager_release_sid_call(client, &ctx, locator_name);
 
 stream_failure:
 	return;
