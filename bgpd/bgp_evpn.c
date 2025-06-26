@@ -8279,8 +8279,17 @@ vni_t bgp_evpn_path_info_get_l3vni(const struct bgp_path_info *pi)
 	if (!pi->extra)
 		return 0;
 
-	return label2vni(bgp_evpn_path_info_labels_get_l3vni(
-		pi->extra->label, pi->extra->num_labels));
+	mpls_label_t *label = bgp_evpn_path_info_labels_get_l3vni(pi->extra->label,
+								  pi->extra->num_labels);
+	if (!label) {
+		const struct prefix *dest_p = bgp_dest_get_prefix(pi->net);
+		/* Shouldn't happen: label not found in pi->extra */
+		flog_err(EC_BGP_PATH_WITHOUT_LABEL,
+			 "%s: %pFX has path_info without label stack, label=%p, num_labels=%d",
+			 __func__, dest_p, pi->extra->label, pi->extra->num_labels);
+		return 0;
+	}
+	return label2vni(label);
 }
 
 /*
