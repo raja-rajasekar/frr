@@ -653,6 +653,10 @@ static void bgp_pcount_adjust(struct bgp_dest *dest, struct bgp_path_info *pi)
 		} else
 			flog_err(EC_LIB_DEVELOPMENT,
 				 "Asked to decrement 0 prefix count for peer");
+		if (pi->peer->pcount[table->afi][table->safi] == 0) {
+			zlog_debug("Resetting the pinstalled count to 0");
+			pi->peer->pinstalledcnt[table->afi][table->safi] = 0;
+		}
 	} else if (BGP_PATH_COUNTABLE(pi)
 		   && !CHECK_FLAG(pi->flags, BGP_PATH_COUNTED)) {
 		SET_FLAG(pi->flags, BGP_PATH_COUNTED);
@@ -678,39 +682,43 @@ static void bgp_pcount_adjust(struct bgp_dest *dest, struct bgp_path_info *pi)
 {
     struct bgp_table *table;
     table = bgp_dest_table(dest);
+    struct peer *peer = pi->peer;
+    char buf[INET6_ADDRSTRLEN];
 
-    if (bgp_debug_zebra(NULL))
-        zlog_debug("flag %d, pi->flags %d, set %d", flag, pi->flags, set);
     if (flag != BGP_PATH_SELECTED && flag != BGP_PATH_MULTIPATH)
         return;
 
-    if (set) {
-        /* To avoid double counting we check flags this way */
-        if (flag == BGP_PATH_SELECTED) {
-            /* We just set SELECTED, check if MULTIPATH was already set */
-            if (!CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
-                pi->peer->pinstalledcnt[table->afi][table->safi]++;
-        } else { /* flag == BGP_PATH_MULTIPATH */
-            /* We just set MULTIPATH, check if SELECTED was already set */
-            if (!CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
-                pi->peer->pinstalledcnt[table->afi][table->safi]++;
-        }
-    } else {
-        if (flag == BGP_PATH_SELECTED) {
-            /* We just unset SELECTED, check if MULTIPATH is also not set */
-            if (!CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH)) {
-                if (pi->peer->pinstalledcnt[table->afi][table->safi])
-                    pi->peer->pinstalledcnt[table->afi][table->safi]--;
-            }
-        } else {
-            /* We just unset MULTIPATH, check if SELECTED is also not set */
-            if (!CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
-                if (pi->peer->pinstalledcnt[table->afi][table->safi])
-                    pi->peer->pinstalledcnt[table->afi][table->safi]--;
-            }
-        }
+    /* Log all the info needed to debug the install count */
+    if (bgp_debug_zebra(NULL)) {
+	    if (peer->conf_if)
+		    zlog_debug("Peer in path is %s", peer->conf_if);
+	    else if (peer->connection->su.sa.sa_family == AF_INET) {
+		    inet_ntop(AF_INET, &peer->connection->su.sin.sin_addr, buf, sizeof(buf));
+		    zlog_debug("Peer in path is %s", buf);
+	    }
+	    zlog_debug("prefix %pFX flag %d, pi->flags %d, set %d install counted %d",
+		       bgp_dest_get_prefix(pi->net), flag, pi->flags, set,
+		       (CHECK_FLAG(pi->flags, BGP_PATH_INSTALL_COUNTED)));
     }
-
+    /* If the flag is set for bestpath or multipath and we haven't counted
+     * until now based on the 'BGP_PATH_INSTALL_COUNTED', increment count and set
+     * 'BGP_PATH_INSTALL_COUNTED' flag */
+    if (set && !(CHECK_FLAG(pi->flags, BGP_PATH_INSTALL_COUNTED))) {
+	    pi->peer->pinstalledcnt[table->afi][table->safi]++;
+	    SET_FLAG(pi->flags, BGP_PATH_INSTALL_COUNTED);
+	    /* If the flag is unset for bestpath or multipath and we have counted
+     * decrement the count and unset the 'BGP_PATH_INSTALL_COUNTED' flag */
+    } else if (!set && (CHECK_FLAG(pi->flags, BGP_PATH_INSTALL_COUNTED))) {
+	    if ((!CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH)) &&
+		(!CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))) {
+		    if (pi->peer->pinstalledcnt[table->afi][table->safi])
+			    pi->peer->pinstalledcnt[table->afi][table->safi]--;
+		    UNSET_FLAG(pi->flags, BGP_PATH_INSTALL_COUNTED);
+	    }
+    }
+    if (bgp_debug_zebra(NULL))
+	    zlog_debug("Peer installed count is %d",
+		       pi->peer->pinstalledcnt[table->afi][table->safi]);
     return;
 }
 

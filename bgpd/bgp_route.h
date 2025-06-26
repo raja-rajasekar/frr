@@ -343,6 +343,8 @@ struct bgp_path_info {
  */
 #define BGP_PATH_MULTIPATH_NEW (1 << 20)
 
+#define BGP_PATH_INSTALL_COUNTED (1 << 21)
+
 	/* BGP route type.  This can be static, RIP, OSPF, BGP etc.  */
 	uint8_t type;
 
