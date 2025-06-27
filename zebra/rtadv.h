@@ -204,6 +204,7 @@ struct rtadvconf {
 #define VTY_RA_CONFIGURED (1 << 1) /* Operator configured RA? */
 #define VTY_RA_INTERVAL_CONFIGURED                                             \
 	(1 << 2)		  /* Operator configured RA interval */
+#define STATIC_RA_CONFIGURED (1 << 3)		       /* Static configured RA? */
 	int NumFastReXmitsRemain; /* Loaded first with number of fast
 				     rexmits to do */
 
@@ -456,8 +457,11 @@ static inline void rtadv_stop_ra_all(void)
 
 extern void zebra_interface_radv_disable(ZAPI_HANDLER_ARGS);
 extern void zebra_interface_radv_enable(ZAPI_HANDLER_ARGS);
+extern void zebra_send_peer_ll_confirmation(struct zserv *client, struct interface *ifp);
+extern void zebra_send_peer_ll_confirmation_on_peer_ra(struct interface *ifp);
 
 extern uint32_t rtadv_get_interfaces_configured_from_bgp(void);
+extern uint32_t rtadv_get_interfaces_configured_from_static(void);
 extern bool rtadv_compiled_in(void);
 extern void rtadv_init(void);
 extern void process_rtadv(void *arg);

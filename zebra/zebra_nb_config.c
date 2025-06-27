@@ -2603,8 +2603,10 @@ int lib_interface_zebra_ipv6_router_advertisements_send_advertisements_modify(
 		ipv6_nd_suppress_ra_set(ifp, RA_ENABLE);
 		SET_FLAG(zif->rtadv.ra_configured, VTY_RA_CONFIGURED);
 	} else {
-		if (!CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED))
+		if (!CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED) &&
+		    !CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED))
 			ipv6_nd_suppress_ra_set(ifp, RA_SUPPRESS);
+
 		UNSET_FLAG(zif->rtadv.ra_configured, VTY_RA_CONFIGURED);
 	}
 

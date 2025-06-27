@@ -57,6 +57,13 @@ void static_ifp_srv6_sids_update(struct interface *ifp, bool is_up)
 		     (sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END ||
 		      sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_NEXT_CSID))) {
 			if (is_up) {
+				if (CHECK_FLAG(sid->flags,
+					       STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL)) {
+					DEBUGD(&static_dbg_srv6,
+					       "%s: SID %pFX is queued for peer LL confirmation, skipping install",
+					       __func__, &sid->addr);
+					continue;
+				}
 				static_zebra_srv6_sid_install(sid);
 				SET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA);
 			} else {
@@ -181,6 +188,9 @@ void static_srv6_init(void)
  */
 void static_srv6_cleanup(void)
 {
-	list_delete(&srv6_locators);
-	list_delete(&srv6_sids);
+	static_srv6_ua_sids_cleanup_queued_for_peer_ll();
+	if (srv6_locators)
+		list_delete(&srv6_locators);
+	if (srv6_sids)
+		list_delete(&srv6_sids);
 }

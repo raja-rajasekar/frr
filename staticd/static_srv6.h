@@ -38,9 +38,10 @@ struct static_srv6_sid {
  * this SRv6 SID has been allocated by SID Manager
  * and can be installed in the zebra RIB
  */
-#define STATIC_FLAG_SRV6_SID_VALID (1 << 0)
-/* this SRv6 SID has been installed in the zebra RIB */
-#define STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA (1 << 1)
+#define STATIC_FLAG_SRV6_SID_VALID	   (1 << 0) /* SID allocated by zebra */
+#define STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA (1 << 1) /* SID sent to zebra for installation */
+#define STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL                                                 \
+	(1 << 2) /* uA SID is queued waiting for peer link-local address */
 
 	char locator_name[SRV6_LOCNAME_SIZE];
 	struct static_srv6_locator *locator;
@@ -79,6 +80,7 @@ extern struct static_srv6_sid *static_srv6_sid_lookup(struct prefix_ipv6 *sid_ad
  * release the memory previously allocated for the SID.
  */
 extern void static_srv6_sid_del(struct static_srv6_sid *sid);
+extern void static_srv6_ua_sids_cleanup_queued_for_peer_ll(void);
 
 /* Initialize SRv6 data structures. */
 extern void static_srv6_init(void);
