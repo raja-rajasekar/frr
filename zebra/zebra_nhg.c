@@ -1165,12 +1165,11 @@ void zebra_nhg_check_valid(struct nhg_hash_entry *nhe)
 	bool valid = false;
 
 	/*
-	 * If I have other nhe's depending on me, or I have nothing
-	 * I am depending on then this is a
-	 * singleton nhe so set this nexthops flag as appropriate.
+	 * Singleton nhe will not have any depends and will have dependents only.
+	 * Set this nexthops flag as appropriate.
 	 */
-	if (nhg_connected_tree_count(&nhe->nhg_depends) ||
-	    nhg_connected_tree_count(&nhe->nhg_dependents) == 0) {
+	if (nhg_connected_tree_count(&nhe->nhg_depends) == 0||
+	    nhg_connected_tree_count(&nhe->nhg_dependents)) {
 		UNSET_FLAG(nhe->nhg.nexthop->flags, NEXTHOP_FLAG_FIB);
 		UNSET_FLAG(nhe->nhg.nexthop->flags, NEXTHOP_FLAG_ACTIVE);
 	}
@@ -2985,8 +2984,14 @@ static bool zebra_nhg_set_valid_if_active(struct nhg_hash_entry *nhe)
 	}
 
 	/* should be fully resolved singleton at this point */
-	if (CHECK_FLAG(nhe->nhg.nexthop->flags, NEXTHOP_FLAG_ACTIVE))
-		valid = true;
+	if (CHECK_FLAG(nhe->nhg.nexthop->flags, NEXTHOP_FLAG_ACTIVE)) {
+		struct interface *ifp = if_lookup_by_index(nhe->nhg.nexthop->ifindex, nhe->vrf_id);
+
+		if (!ifp || !if_is_operative(ifp))
+			valid = false;
+		else
+			valid = true;
+	}
 
 done:
 	if (valid)
