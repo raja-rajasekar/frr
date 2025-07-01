@@ -819,11 +819,57 @@ static void rtadv_process_advert(uint8_t *msg, unsigned int len,
 	IPV6_ADDR_COPY(&p.u.prefix6, &addr->sin6_addr);
 	p.prefixlen = IPV6_MAX_BITLEN;
 
+	/* Check for peer LL changes BEFORE updating neighbor entry */
+	bool ll_changed = false;
+	struct nbr_connected *old_nbr = NULL;
+
+
+	if (CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+		old_nbr = nbr_connected_check(ifp, &p);
+
+		/* If staticd has confirmed a LL address, always compare against it */
+		if (CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED)) {
+			if (!IN6_ARE_ADDR_EQUAL(&zif->static_confirmed_peer_ll, &addr->sin6_addr)) {
+				ll_changed = true;
+				if (IS_ZEBRA_DEBUG_EVENT)
+					zlog_debug("%s: LL change detected - RA source differs from confirmed LL",
+						   ifp->name);
+			}
+		} else {
+			/* First time - check if neighbor exists and compare */
+			if (old_nbr) {
+				if (!IN6_ARE_ADDR_EQUAL(&old_nbr->address->u.prefix6,
+							&addr->sin6_addr)) {
+					ll_changed = true;
+					if (IS_ZEBRA_DEBUG_EVENT)
+						zlog_debug("%s: LL change detected - neighbor address changed",
+							   ifp->name);
+				}
+			}
+		}
+	}
+
 	if (!nbr_connected_check(ifp, &p))
 		nbr_connected_add_ipv6(ifp, &addr->sin6_addr);
 
-	/* Send RA confirmation to static clients when peer RA is received */
-	zebra_send_peer_ll_confirmation_on_peer_ra(ifp);
+	if (CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+		/* Handle first-time confirmation if needed */
+		if (CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING) &&
+		    !CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED)) {
+			zebra_send_peer_ll_confirmation_on_peer_ra(ifp);
+			IPV6_ADDR_COPY(&zif->static_confirmed_peer_ll, &addr->sin6_addr);
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: Stored confirmed LL address: %pI6 for interface %s",
+					   __func__, &zif->static_confirmed_peer_ll, ifp->name);
+		} else if (ll_changed) {
+			zebra_notify_static_peer_ll_change(ifp, &addr->sin6_addr);
+			IPV6_ADDR_COPY(&zif->static_confirmed_peer_ll, &addr->sin6_addr);
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: Sent LL changed notification and Updated confirmed LL address to: %pI6 for interface %s",
+					   __func__, &zif->static_confirmed_peer_ll, ifp->name);
+		}
+		/* If already confirmed and no change, do nothing - don't update the confirmed LL address */
+	}
 }
 
 
@@ -1489,19 +1535,6 @@ void zebra_send_peer_ll_confirmation_on_peer_ra(struct interface *ifp)
 		return;
 
 	zif = ifp->info;
-
-	/* Only send confirmation if staticd is waiting for this interface */
-	if (!CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING))
-		return;
-
-	/* Check if PEER LL confirmation has already been sent for this interface */
-	if (CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED)) {
-		if (IS_ZEBRA_DEBUG_EVENT)
-			zlog_debug("%s: PEER LL confirmation already sent for interface %s, skipping",
-				   __func__, ifp->name);
-		return;
-	}
-
 	for (ALL_LIST_ELEMENTS_RO(zrouter.client_list, node, client)) {
 		if (client->proto == ZEBRA_ROUTE_STATIC) {
 			if (IS_ZEBRA_DEBUG_EVENT)
@@ -1511,6 +1544,42 @@ void zebra_send_peer_ll_confirmation_on_peer_ra(struct interface *ifp)
 			zebra_send_peer_ll_confirmation(client, ifp);
 			SET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
 			UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
+			break;
+		}
+	}
+}
+
+/* Send notification to staticd to reinstall uA SIDs due to change in LL */
+void zebra_notify_static_peer_ll_change(struct interface *ifp, struct in6_addr *new_ll_addr)
+{
+	struct listnode *node;
+	struct zserv *client;
+	struct stream *s;
+
+	for (ALL_LIST_ELEMENTS_RO(zrouter.client_list, node, client)) {
+		if (client->proto == ZEBRA_ROUTE_STATIC) {
+			s = stream_new(ZEBRA_SMALL_PACKET_SIZE);
+			if (!s) {
+				zlog_err("%s: OOM while allocating stream for PEER_LL_CHANGE",
+					 __func__);
+				return;
+			}
+
+			/* Write header */
+			zclient_create_header(s, ZEBRA_PEER_LL_CHANGE, ifp->vrf->vrf_id);
+			stream_putl(s, ifp->ifindex);
+
+			/* Include the new LL address */
+			if (new_ll_addr) {
+				stream_put(s, new_ll_addr, sizeof(struct in6_addr));
+			}
+
+			stream_putw_at(s, 0, stream_get_endp(s));
+			zserv_send_message(client, s);
+
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: Sent PEER_LL_CHANGE to staticd for interface %s with new LL %pI6",
+					   __func__, ifp->name, new_ll_addr);
 			break;
 		}
 	}
@@ -1639,6 +1708,9 @@ static void zebra_interface_radv_set(ZAPI_HANDLER_ARGS, int enable)
 			UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
 			UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
 			UNSET_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED);
+
+			memset(&zif->static_confirmed_peer_ll, 0, sizeof(struct in6_addr));
+
 			if (IS_ZEBRA_DEBUG_EVENT)
 				zlog_debug("%s: IF %s Static RA unconfigured, total Static interfaces: %u",
 					   __func__, ifp->name,
@@ -2406,6 +2478,8 @@ static int zebra_static_client_disconnect(struct zserv *client)
 				UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
 				UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
 				UNSET_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED);
+
+				memset(&zif->static_confirmed_peer_ll, 0, sizeof(struct in6_addr));
 			}
 		}
 
