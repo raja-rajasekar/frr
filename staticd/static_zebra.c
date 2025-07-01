@@ -33,8 +33,22 @@
 #include "zclient.h"
 #include "static_srv6.h"
 #include "lib_errors.h"
+#include "zebra/interface.h"
 
 DEFINE_MTYPE_STATIC(STATIC, STATIC_NHT_DATA, "Static Nexthop tracking data");
+DEFINE_MTYPE_STATIC(STATIC, STATIC_PEER_LL_WAITING_QUEUE,
+		    "Static peer link-local waiting queue entry");
+DEFINE_MTYPE_STATIC(STATIC, STATIC_IF, "Static interface info");
+
+/* Static interface info structure */
+struct static_if {
+	uint32_t flags;
+};
+
+/* RA flags for static interface */
+#define STATIC_IF_FLAG_PEER_LL_WAITING	 (1 << 0)
+#define STATIC_IF_FLAG_PEER_LL_CONFIRMED (1 << 1)
+
 PREDECL_HASH(static_nht_hash);
 
 struct static_nht_data {
@@ -78,9 +92,376 @@ static struct static_nht_hash_head static_nht_hash[1];
 struct zclient *zclient;
 uint32_t zebra_ecmp_count = MULTIPATH_NUM;
 
+/* Queue for uA SID allocation after peer link-local confirmation */
+struct static_peer_ll_waiting_queue {
+	struct static_srv6_sid *sid;
+	struct static_peer_ll_waiting_queue *next;
+};
+
+static struct static_peer_ll_waiting_queue *peer_ll_waiting_queue_head = NULL;
+static struct static_peer_ll_waiting_queue *peer_ll_waiting_queue_tail = NULL;
+
+static void static_zebra_initiate_ra(struct interface *ifp, bool enable, uint32_t interval)
+{
+	struct static_if *sif;
+
+	if (!ifp || !zclient || zclient->sock < 0)
+		return;
+
+	if (enable) {
+		/* Set the waiting flag on staticd's interface structure */
+		sif = ifp->info;
+		if (sif)
+			SET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
+
+		zclient_send_interface_radv_req(zclient, ifp->vrf->vrf_id, ifp, 1, interval);
+	} else {
+		/* Clear the waiting flag when disabling RA */
+		sif = ifp->info;
+		if (sif) {
+			UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
+			UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
+		}
+		zclient_send_interface_radv_req(zclient, ifp->vrf->vrf_id, ifp, 0, 0);
+	}
+}
+
+/* Queue uA SID allocation to wait for peer link-local address */
+static bool static_queue_ua_sid_allocation_after_peer_ll(struct static_srv6_sid *sid)
+{
+	struct static_peer_ll_waiting_queue *queue_entry;
+
+	queue_entry = XCALLOC(MTYPE_STATIC_PEER_LL_WAITING_QUEUE,
+			      sizeof(struct static_peer_ll_waiting_queue));
+	if (!queue_entry)
+		return false;
+
+	queue_entry->sid = sid;
+	queue_entry->next = NULL;
+
+	if (peer_ll_waiting_queue_tail) {
+		peer_ll_waiting_queue_tail->next = queue_entry;
+		peer_ll_waiting_queue_tail = queue_entry;
+	} else {
+		peer_ll_waiting_queue_head = queue_entry;
+		peer_ll_waiting_queue_tail = queue_entry;
+	}
+
+	/* Set flag to indicate SID is queued waiting for peer link-local */
+	SET_FLAG(sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL);
+
+	DEBUGD(&static_dbg_srv6, "%s: SID %pFX queued for peer link-local confirmation", __func__,
+	       &sid->addr);
+
+	return true;
+}
+
+/* Process queued uA SID allocations after peer link-local confirmation */
+static void static_process_queued_ua_sid_allocations(struct interface *ifp)
+{
+	struct static_peer_ll_waiting_queue *current, *next;
+
+	current = peer_ll_waiting_queue_head;
+	while (current) {
+		next = current->next;
+
+		if (strcmp(current->sid->attributes.ifname, ifp->name) == 0) {
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Processing queued uA SID %pFX for interface %s", __func__,
+			       &current->sid->addr, ifp->name);
+
+			/* Proceed with SID allocation */
+			static_zebra_request_srv6_sid(current->sid);
+
+			/* Remove from queue */
+			if (current == peer_ll_waiting_queue_head) {
+				peer_ll_waiting_queue_head = next;
+				if (!peer_ll_waiting_queue_head)
+					peer_ll_waiting_queue_tail = NULL;
+			} else {
+				struct static_peer_ll_waiting_queue *prev =
+					peer_ll_waiting_queue_head;
+				while (prev && prev->next != current)
+					prev = prev->next;
+				if (prev)
+					prev->next = next;
+				if (current == peer_ll_waiting_queue_tail)
+					peer_ll_waiting_queue_tail = prev;
+			}
+
+			UNSET_FLAG(current->sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL);
+
+			XFREE(MTYPE_STATIC_PEER_LL_WAITING_QUEUE, current);
+		}
+
+		current = next;
+	}
+}
+
+/* Check if uA SID is queued for peer link-local */
+static bool static_ua_sid_is_queued_for_peer_ll(struct static_srv6_sid *sid)
+{
+	return CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL);
+}
+
+/* Check if peer link-local confirmation was received for this interface */
+static bool static_peer_ll_confirmation_received(struct interface *ifp)
+{
+	struct static_if *sif;
+
+	if (!ifp)
+		return false;
+
+	sif = ifp->info;
+	if (!sif)
+		return false;
+
+	return CHECK_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
+}
+
+/*
+ * uA behavior needs RA only if:
+ *   1. Behavior is uA (END_X_NEXT_CSID)
+ *   2. Interface is configured
+ */
+static bool static_srv6_ua_needs_ra(struct static_srv6_sid *sid)
+{
+	return (sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_X_NEXT_CSID &&
+		sid->attributes.ifname[0] != '\0');
+}
+
+/* Remove SID from peer LL waiting queue */
+static void static_remove_ua_sid_queued_for_peer_ll(struct static_srv6_sid *sid)
+{
+	struct static_peer_ll_waiting_queue *current, *next, *prev = NULL;
+
+	current = peer_ll_waiting_queue_head;
+	while (current) {
+		next = current->next;
+
+		if (current->sid == sid) {
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Found SID %pFX in peer LL waiting queue, Removing", __func__,
+			       &sid->addr);
+
+			/* Remove from queue */
+			if (current == peer_ll_waiting_queue_head) {
+				peer_ll_waiting_queue_head = next;
+				if (!peer_ll_waiting_queue_head)
+					peer_ll_waiting_queue_tail = NULL;
+			} else {
+				if (prev)
+					prev->next = next;
+				if (current == peer_ll_waiting_queue_tail)
+					peer_ll_waiting_queue_tail = prev;
+			}
+
+			/* Clear flag to indicate SID is no longer queued for peer LL */
+			UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL);
+
+			XFREE(MTYPE_STATIC_PEER_LL_WAITING_QUEUE, current);
+			break;
+		}
+
+		prev = current;
+		current = next;
+	}
+}
+
+/*
+ * Checks if there are other uA SIDs on the same interface that need are
+ * waiting for peer LL
+ *
+ * - Checks global SID list for other uA SIDs on the same interface
+ * - Checks peer LL waiting queue for other uA SIDs if none found in global list
+ * - Always removes sid_to_eval from the peer LL waiting queue if found there
+ * - Returns true if other uA SIDs exist on same intf (RA stays enabled)
+ * - Returns false if no other uA SIDs exist on same intf (RA can be disabled)
+ */
+static bool static_ua_sids_exist_on_interface(const char *ifname,
+					      struct static_srv6_sid *sid_to_eval)
+{
+	struct listnode *node = NULL;
+	struct static_srv6_sid *sid = NULL;
+	struct static_peer_ll_waiting_queue *queue_entry = NULL;
+	bool found = false;
+	bool sid_to_eval_in_queue = false;
+
+	if (!ifname || ifname[0] == '\0')
+		return false;
+
+	for (ALL_LIST_ELEMENTS_RO(srv6_sids, node, sid)) {
+		/* Skip the SID being evaluated */
+		if (sid == sid_to_eval)
+			continue;
+
+		if (static_srv6_ua_needs_ra(sid) && strcmp(sid->attributes.ifname, ifname) == 0) {
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Found other uA SID %pFX on interface %s (in global list)",
+			       __func__, &sid->addr, ifname);
+			found = true;
+			break;
+		}
+	}
+
+	/* Check if sid_to_eval is in the queue using the flag */
+	if (static_ua_sid_is_queued_for_peer_ll(sid_to_eval)) {
+		sid_to_eval_in_queue = true;
+	}
+
+	/* Check if other sids in queue are on the same interface */
+	if (!found) {
+		queue_entry = peer_ll_waiting_queue_head;
+		while (queue_entry) {
+			/* Skip the SID being evaluated */
+			if (queue_entry->sid == sid_to_eval) {
+				queue_entry = queue_entry->next;
+				continue;
+			}
+
+			if (strcmp(queue_entry->sid->attributes.ifname, ifname) == 0) {
+				DEBUGD(&static_dbg_srv6,
+				       "%s: Found other uA SID %pFX on interface %s (in queue)",
+				       __func__, &queue_entry->sid->addr, ifname);
+				found = true;
+				break;
+			}
+
+			queue_entry = queue_entry->next;
+		}
+	}
+
+	if (sid_to_eval_in_queue) {
+		DEBUGD(&static_dbg_srv6,
+		       "%s: SID to evaluate %pFX is in peer LL waiting queue, Removing it.",
+		       __func__, &sid_to_eval->addr);
+		static_remove_ua_sid_queued_for_peer_ll(sid_to_eval);
+	}
+
+	DEBUGD(&static_dbg_srv6, "%s: Interface %s has other uA SIDs: %s", __func__, ifname,
+	       found ? "true" : "false");
+
+	return found;
+}
+
+/* Handle enabling/disabling RA for uA behavior */
+void static_srv6_ua_handle_ra(struct static_srv6_sid *sid, bool enable)
+{
+	struct interface *ifp;
+	struct static_if *sif;
+
+	DEBUGD(&static_dbg_srv6, "%s: %s RA on interface '%s' for SID %pFX behavior %u", __func__,
+	       enable ? "Enabling" : "Disabling", sid->attributes.ifname, &sid->addr, sid->behavior);
+
+	if (!static_srv6_ua_needs_ra(sid))
+		return;
+
+	ifp = if_lookup_by_name(sid->attributes.ifname, VRF_DEFAULT);
+	if (!ifp) {
+		zlog_warn("%s: SID %pFX interface '%s' not found in default VRF", __func__,
+			  &sid->addr, sid->attributes.ifname);
+		return;
+	}
+
+	if (enable) {
+		sif = ifp->info;
+		if (sif && CHECK_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING)) {
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Interface '%s' already has RA waiting to be enabled, skipping for SID %pFX ",
+			       __func__, ifp->name, &sid->addr);
+			return;
+		}
+
+		DEBUGD(&static_dbg_srv6,
+		       "%s:Requesting RA on interface '%s' with 1s interval for SID %pFX  ",
+		       __func__, ifp->name, &sid->addr);
+		static_zebra_initiate_ra(ifp, true, 1);
+	} else {
+		/* Check if there are other uA SIDs on the same interface before releasing RA */
+		if (static_ua_sids_exist_on_interface(sid->attributes.ifname, sid)) {
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Interface '%s' has other uA SIDs, keeping RA enabled(evaluated for SID %pFX) ",
+			       __func__, ifp->name, &sid->addr);
+			return;
+		}
+
+		DEBUGD(&static_dbg_srv6, "%s: Disabling RA on interface %s for SID %pFX", __func__,
+		       ifp->name, &sid->addr);
+		static_zebra_initiate_ra(ifp, false, 0);
+	}
+}
+
+/* Clean up RA queue during shutdown */
+void static_srv6_ua_sids_cleanup_queued_for_peer_ll(void)
+{
+	struct static_peer_ll_waiting_queue *current, *next;
+
+	current = peer_ll_waiting_queue_head;
+	while (current) {
+		next = current->next;
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Shutdown: Freeing peer LL waiting queue entry for SID %pFX", __func__,
+		       &current->sid->addr);
+		XFREE(MTYPE_STATIC_PEER_LL_WAITING_QUEUE, current);
+		current = next;
+	}
+
+	peer_ll_waiting_queue_head = NULL;
+	peer_ll_waiting_queue_tail = NULL;
+}
+
+/* Peer link-local confirmation callback handler */
+static int static_zebra_peer_ll_confirmation(ZAPI_CALLBACK_ARGS)
+{
+	struct stream *s;
+	ifindex_t ifindex;
+	struct interface *ifp;
+	struct static_if *sif;
+
+	s = zclient->ibuf;
+
+	/* Get interface index */
+	STREAM_GETL(s, ifindex);
+
+	ifp = if_lookup_by_index(ifindex, vrf_id);
+	if (!ifp) {
+		zlog_err("%s: Peer link-local confirmation for unknown interface %u", __func__,
+			 ifindex);
+		return -1;
+	}
+
+	/* Set the peer link-local confirmation flag on staticd's interface structure */
+	sif = ifp->info;
+	if (!sif) {
+		zlog_warn("%s: No static interface info for %s", __func__, ifp->name);
+		return -1;
+	}
+
+	/* Set the peer link-local confirmation flag and clear the waiting flag */
+	SET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
+	UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
+
+	DEBUGD(&static_dbg_srv6,
+	       "%s: Peer link-local confirmation received for interface %s (ifindex %u)", __func__,
+	       ifp->name, ifindex);
+
+	/* Process queued uA SID allocations for this interface */
+	static_process_queued_ua_sid_allocations(ifp);
+
+stream_failure:
+	return 0;
+}
+
 /* Interface addition message from zebra. */
 static int static_ifp_create(struct interface *ifp)
 {
+	struct static_if *sif;
+
+	sif = XCALLOC(MTYPE_STATIC_IF, sizeof(struct static_if));
+	if (!sif)
+		return -1;
+
+	ifp->info = sif;
 	static_ifindex_update(ifp, true);
 
 	return 0;
@@ -89,6 +470,11 @@ static int static_ifp_create(struct interface *ifp)
 static int static_ifp_destroy(struct interface *ifp)
 {
 	static_ifindex_update(ifp, false);
+	if (ifp->info) {
+		XFREE(MTYPE_STATIC_IF, ifp->info);
+		ifp->info = NULL;
+	}
+
 	return 0;
 }
 
@@ -123,7 +509,51 @@ static int static_ifp_up(struct interface *ifp)
 
 static int static_ifp_down(struct interface *ifp)
 {
+	struct static_if *sif;
+	struct static_peer_ll_waiting_queue *current, *next;
+
 	static_ifindex_update(ifp, false);
+
+	/* Clear peer LL flags when interface goes down */
+	sif = ifp->info;
+	if (sif) {
+		UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
+		UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
+	}
+
+	/* Remove SIDs from peer LL waiting queue for this interface */
+	current = peer_ll_waiting_queue_head;
+	while (current) {
+		next = current->next;
+
+		if (strcmp(current->sid->attributes.ifname, ifp->name) == 0) {
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Interface %s down, removing SID %pFX from peer LL waiting queue",
+			       __func__, ifp->name, &current->sid->addr);
+
+			/* Remove from queue */
+			if (current == peer_ll_waiting_queue_head) {
+				peer_ll_waiting_queue_head = next;
+				if (!peer_ll_waiting_queue_head)
+					peer_ll_waiting_queue_tail = NULL;
+			} else {
+				struct static_peer_ll_waiting_queue *prev =
+					peer_ll_waiting_queue_head;
+				while (prev && prev->next != current)
+					prev = prev->next;
+				if (prev)
+					prev->next = next;
+				if (current == peer_ll_waiting_queue_tail)
+					peer_ll_waiting_queue_tail = prev;
+			}
+
+			UNSET_FLAG(current->sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL);
+
+			XFREE(MTYPE_STATIC_PEER_LL_WAITING_QUEUE, current);
+		}
+
+		current = next;
+	}
 
 	static_ifp_srv6_sids_update(ifp, false);
 
@@ -630,6 +1060,14 @@ void static_zebra_srv6_sid_install(struct static_srv6_sid *sid)
 	if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA))
 		return;
 
+	/* Check if SID is queued for peer LL confirmation */
+	if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL)) {
+		DEBUGD(&static_dbg_srv6,
+		       "%s: SID %pFX is queued for peer LL confirmation, skipping install",
+		       __func__, &sid->addr);
+		return;
+	}
+
 	if (!sid->locator) {
 		zlog_err("Failed to install SID %pFX: missing locator information", &sid->addr);
 		return;
@@ -854,7 +1292,7 @@ void static_zebra_srv6_sid_uninstall(struct static_srv6_sid *sid)
 	case SRV6_ENDPOINT_BEHAVIOR_OPAQUE:
 	case SRV6_ENDPOINT_BEHAVIOR_RESERVED:
 		zlog_warn("unsupported behavior: %u", sid->behavior);
-		break;
+		return;
 	}
 
 	/* The SID is attached to the SRv6 interface */
@@ -997,6 +1435,16 @@ extern void static_zebra_request_srv6_sid(struct static_srv6_sid *sid)
 			return;
 		}
 		ctx.ifindex = ifp->ifindex;
+
+		if (!static_peer_ll_confirmation_received(ifp)) {
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Interface %s waiting on peer LL confirmation for SID %pFX , queuing SID allocation",
+			       __func__, ifp->name, &sid->addr);
+			static_queue_ua_sid_allocation_after_peer_ll(sid);
+			static_srv6_ua_handle_ra(sid, true);
+			return;
+		}
+
 		break;
 	case SRV6_ENDPOINT_BEHAVIOR_END_PSP_USD:
 	case SRV6_ENDPOINT_BEHAVIOR_END_NEXT_CSID_PSP_USD:
@@ -1247,6 +1695,8 @@ static int static_zebra_process_srv6_locator_delete(ZAPI_CALLBACK_ARGS)
 		DEBUGD(&static_dbg_srv6, "%s: Deleting SRv6 SID (locator %s, sid %pFX)", __func__,
 		       locator->name, &sid->addr);
 
+		if (static_ua_sid_is_queued_for_peer_ll(sid))
+			static_remove_ua_sid_queued_for_peer_ll(sid);
 		/*
 		 * Uninstall the SRv6 SID from the forwarding plane
 		 * through Zebra
@@ -1369,6 +1819,7 @@ static zclient_handler *const static_handlers[] = {
 	[ZEBRA_SRV6_LOCATOR_ADD] = static_zebra_process_srv6_locator_add,
 	[ZEBRA_SRV6_LOCATOR_DELETE] = static_zebra_process_srv6_locator_delete,
 	[ZEBRA_SRV6_SID_NOTIFY] = static_zebra_srv6_sid_notify,
+	[ZEBRA_PEER_LL_CONFIRMATION] = static_zebra_peer_ll_confirmation,
 };
 
 void static_zebra_init(void)
@@ -1390,11 +1841,31 @@ void static_zebra_init(void)
 	static_bfd_initialize(zclient, master);
 }
 
+/* Clean up all static interface info structures */
+static void static_cleanup_interface_info(void)
+{
+	struct vrf *vrf;
+	struct interface *ifp;
+
+	/* Clean up interface info for all VRFs */
+	RB_FOREACH (vrf, vrf_name_head, &vrfs_by_name) {
+		FOR_ALL_INTERFACES (vrf, ifp) {
+			if (ifp->info) {
+				XFREE(MTYPE_STATIC_IF, ifp->info);
+				ifp->info = NULL;
+			}
+		}
+	}
+}
+
 /* static_zebra_stop used by tests/lib/test_grpc.cpp */
 void static_zebra_stop(void)
 {
 	static_nht_hash_clear();
 	static_nht_hash_fini(static_nht_hash);
+
+	/* Clean up all static interface info structures */
+	static_cleanup_interface_info();
 
 	if (!zclient)
 		return;

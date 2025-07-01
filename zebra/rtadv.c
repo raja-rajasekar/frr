@@ -33,10 +33,12 @@
 #include "zebra/zebra_errors.h"
 #include "zebra/zebra_router.h"
 #include "zebra/zebra_trace.h"
+#include "zebra/zserv.h"
 
 extern struct zebra_privs_t zserv_privs;
 
 static uint32_t interfaces_configured_for_ra_from_bgp;
+static uint32_t interfaces_configured_for_ra_from_static;
 #define RTADV_ADATA_SIZE 1024
 
 #define PROC_IGMP6 "/proc/net/igmp6"
@@ -819,6 +821,9 @@ static void rtadv_process_advert(uint8_t *msg, unsigned int len,
 
 	if (!nbr_connected_check(ifp, &p))
 		nbr_connected_add_ipv6(ifp, &addr->sin6_addr);
+
+	/* Send RA confirmation to static clients when peer RA is received */
+	zebra_send_peer_ll_confirmation_on_peer_ra(ifp);
 }
 
 
@@ -1439,11 +1444,75 @@ void ipv6_nd_interval_set(struct interface *ifp, uint32_t interval)
 		SET_FLAG(zif->rtadv.ra_configured, VTY_RA_INTERVAL_CONFIGURED);
 		zif->rtadv.AdvIntervalTimer = 0;
 	} else {
-		if (CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED))
+		if (CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED))
+			zif->rtadv.MaxRtrAdvInterval = 1000;
+		else if (CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED))
 			zif->rtadv.MaxRtrAdvInterval = 10000;
 
 		UNSET_FLAG(zif->rtadv.ra_configured, VTY_RA_INTERVAL_CONFIGURED);
 		zif->rtadv.AdvIntervalTimer = zif->rtadv.MaxRtrAdvInterval;
+	}
+}
+
+/* Send RA confirmation to static client */
+void zebra_send_peer_ll_confirmation(struct zserv *client, struct interface *ifp)
+{
+	struct stream *s;
+
+	s = stream_new(ZEBRA_SMALL_PACKET_SIZE);
+	if (!s) {
+		zlog_err("%s: OOM while allocating stream for PEER_LL_CONFIRMATION", __func__);
+		return;
+	}
+
+	/* Write header */
+	zclient_create_header(s, ZEBRA_PEER_LL_CONFIRMATION, ifp->vrf->vrf_id);
+
+	/* Write interface index */
+	stream_putl(s, ifp->ifindex);
+
+	/* Update message length */
+	stream_putw_at(s, 0, stream_get_endp(s));
+
+	/* Send to client */
+	zserv_send_message(client, s);
+}
+
+/* Send RA confirmation to static client when peer RA is received */
+void zebra_send_peer_ll_confirmation_on_peer_ra(struct interface *ifp)
+{
+	struct listnode *node;
+	struct zserv *client;
+	struct zebra_if *zif = NULL;
+
+	if (!ifp || !ifp->info)
+		return;
+
+	zif = ifp->info;
+
+	/* Only send confirmation if staticd is waiting for this interface */
+	if (!CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING))
+		return;
+
+	/* Check if PEER LL confirmation has already been sent for this interface */
+	if (CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED)) {
+		if (IS_ZEBRA_DEBUG_EVENT)
+			zlog_debug("%s: PEER LL confirmation already sent for interface %s, skipping",
+				   __func__, ifp->name);
+		return;
+	}
+
+	for (ALL_LIST_ELEMENTS_RO(zrouter.client_list, node, client)) {
+		if (client->proto == ZEBRA_ROUTE_STATIC) {
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: Sending peer LL confirmation to static client for interface %s (peer RA received)",
+					   __func__, ifp->name);
+
+			zebra_send_peer_ll_confirmation(client, ifp);
+			SET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
+			UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
+			break;
+		}
 	}
 }
 
@@ -1490,38 +1559,128 @@ static void zebra_interface_radv_set(ZAPI_HANDLER_ARGS, int enable)
 		return;
 	}
 	if (vrf_is_backend_netns() && ifp->vrf->vrf_id != zvrf_id(zvrf)) {
-		zlog_debug(
-			"%s:%u: IF %u RA %s client %s - VRF mismatch, IF VRF %u",
-			ifp->vrf->name, zvrf_id(zvrf), ifindex,
-			enable ? "enable" : "disable",
-			zebra_route_string(client->proto), ifp->vrf->vrf_id);
+		if (IS_ZEBRA_DEBUG_EVENT)
+			zlog_debug("%s:%u: IF %u RA %s client %s - VRF mismatch, IF VRF %u",
+				   ifp->vrf->name, zvrf_id(zvrf), ifindex,
+				   enable ? "enable" : "disable", zebra_route_string(client->proto),
+				   ifp->vrf->vrf_id);
 		return;
 	}
 
 	zif = ifp->info;
 	if (enable) {
-		if (!CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED))
-			interfaces_configured_for_ra_from_bgp++;
+		if (client->proto == ZEBRA_ROUTE_BGP) {
+			if (!CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED))
+				interfaces_configured_for_ra_from_bgp++;
 
-		SET_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED);
+			SET_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED);
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: IF %s BGP RA configured, total BGP interfaces: %u",
+					   __func__, ifp->name,
+					   interfaces_configured_for_ra_from_bgp);
+		} else if (client->proto == ZEBRA_ROUTE_STATIC) {
+			if (CHECK_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING)) {
+				if (IS_ZEBRA_DEBUG_EVENT)
+					zlog_debug("%s: IF %s already waiting for Peer LL confirmation, skipping",
+						   __func__, ifp->name);
+				return;
+			}
+
+			if (!CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED))
+				interfaces_configured_for_ra_from_static++;
+
+			SET_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED);
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: IF %s Static RA configured, total Static interfaces: %u",
+					   __func__, ifp->name,
+					   interfaces_configured_for_ra_from_static);
+
+			SET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
+		}
+
 		ipv6_nd_suppress_ra_set(ifp, RA_ENABLE);
-		if (ra_interval
-		    && (ra_interval * 1000) < (unsigned int) zif->rtadv.MaxRtrAdvInterval
-		    && !CHECK_FLAG(zif->rtadv.ra_configured,
-				   VTY_RA_INTERVAL_CONFIGURED))
-			zif->rtadv.MaxRtrAdvInterval = ra_interval * 1000;
+		if (ra_interval &&
+		    (ra_interval * 1000) < (unsigned int)zif->rtadv.MaxRtrAdvInterval &&
+		    !CHECK_FLAG(zif->rtadv.ra_configured, VTY_RA_INTERVAL_CONFIGURED)) {
+			if (client->proto == ZEBRA_ROUTE_STATIC) {
+				zif->rtadv.MaxRtrAdvInterval = ra_interval * 1000;
+				if (IS_ZEBRA_DEBUG_EVENT)
+					zlog_debug("%s: IF %s using Static-provided interval: %ums",
+						   __func__, ifp->name,
+						   zif->rtadv.MaxRtrAdvInterval);
+			}
+			/* For BGP, only use if Static hasn't already set an interval */
+			else if (client->proto == ZEBRA_ROUTE_BGP &&
+				 !CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+				zif->rtadv.MaxRtrAdvInterval = ra_interval * 1000;
+				if (IS_ZEBRA_DEBUG_EVENT)
+					zlog_debug("%s: IF %s using BGP-provided interval: %ums",
+						   __func__, ifp->name,
+						   zif->rtadv.MaxRtrAdvInterval);
+			}
+		}
 	} else {
-		if (CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED))
-			interfaces_configured_for_ra_from_bgp--;
+		/* Handle BGP RA disable requests */
+		if (client->proto == ZEBRA_ROUTE_BGP) {
+			if (CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED))
+				interfaces_configured_for_ra_from_bgp--;
 
-		UNSET_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED);
-		if (!CHECK_FLAG(zif->rtadv.ra_configured,
-				VTY_RA_INTERVAL_CONFIGURED))
-			zif->rtadv.MaxRtrAdvInterval =
-				RTADV_MAX_RTR_ADV_INTERVAL;
-		if (!CHECK_FLAG(zif->rtadv.ra_configured, VTY_RA_CONFIGURED))
+			UNSET_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED);
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: IF %s BGP RA unconfigured, total BGP interfaces: %u",
+					   __func__, ifp->name,
+					   interfaces_configured_for_ra_from_bgp);
+		}
+		/* Handle Static RA disable requests */
+		else if (client->proto == ZEBRA_ROUTE_STATIC) {
+			if (CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED))
+				interfaces_configured_for_ra_from_static--;
+
+			UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
+			UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
+			UNSET_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED);
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: IF %s Static RA unconfigured, total Static interfaces: %u",
+					   __func__, ifp->name,
+					   interfaces_configured_for_ra_from_static);
+		}
+
+		/* Reset RA interval if not configured by VTY */
+		if (!CHECK_FLAG(zif->rtadv.ra_configured, VTY_RA_INTERVAL_CONFIGURED)) {
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: IF %s resetting RA interval to prtocol default %ums",
+					   __func__, ifp->name, RTADV_MAX_RTR_ADV_INTERVAL);
+
+			if (CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+				zif->rtadv.MaxRtrAdvInterval = 1000;
+			} else if (CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED)) {
+				zif->rtadv.MaxRtrAdvInterval = 10000;
+			} else {
+				zif->rtadv.MaxRtrAdvInterval = RTADV_MAX_RTR_ADV_INTERVAL;
+			}
+		}
+
+		/* Disable RA only if no other source has configured it */
+		if (!CHECK_FLAG(zif->rtadv.ra_configured, VTY_RA_CONFIGURED) &&
+		    !CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED) &&
+		    !CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+			if (IS_ZEBRA_DEBUG_EVENT)
+				zlog_debug("%s: IF %s disabling RA (no sources configured)",
+					   __func__, ifp->name);
+
 			ipv6_nd_suppress_ra_set(ifp, RA_SUPPRESS);
+		} else if (IS_ZEBRA_DEBUG_EVENT)
+			zlog_debug("%s: IF %s RA not disabled (VTY: %s, BGP: %s, Static: %s)",
+				   __func__, ifp->name,
+				   CHECK_FLAG(zif->rtadv.ra_configured, VTY_RA_CONFIGURED) ? "yes"
+											   : "no",
+				   CHECK_FLAG(zif->rtadv.ra_configured, BGP_RA_CONFIGURED) ? "yes"
+											   : "no",
+				   CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)
+					   ? "yes"
+					   : "no");
 	}
+
 stream_failure:
 	return;
 }
@@ -2214,6 +2373,47 @@ uint32_t rtadv_get_interfaces_configured_from_bgp(void)
 	return interfaces_configured_for_ra_from_bgp;
 }
 
+uint32_t rtadv_get_interfaces_configured_from_static(void)
+{
+	return interfaces_configured_for_ra_from_static;
+}
+
+/* Clear RA flags when staticd client disconnects (Crashed) */
+static int zebra_static_client_disconnect(struct zserv *client)
+{
+	struct vrf *vrf;
+	struct interface *ifp;
+	struct zebra_if *zif;
+	struct zebra_vrf *zvrf;
+
+	/* Only handle staticd client disconnects */
+	if (client->proto != ZEBRA_ROUTE_STATIC)
+		return 0;
+
+	if (IS_ZEBRA_DEBUG_EVENT)
+		zlog_debug("%s: Static client disconnected, clearing peer link-local flags on all interfaces",
+			   __func__);
+
+	RB_FOREACH (vrf, vrf_name_head, &vrfs_by_name)
+		FOR_ALL_INTERFACES (vrf, ifp) {
+			zif = ifp->info;
+			if (zif && CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+				zvrf = rtadv_interface_get_zvrf(ifp);
+
+				// Send RA with router lifetime = 0 before clearing flags
+				rtadv_send_packet(zvrf->rtadv.sock, ifp, RA_SUPPRESS);
+
+				UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
+				UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
+				UNSET_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED);
+			}
+		}
+
+	interfaces_configured_for_ra_from_static = 0;
+
+	return 0;
+}
+
 void rtadv_init(void)
 {
 	if (CMSG_SPACE(sizeof(struct in6_pktinfo)) > RTADV_ADATA_SIZE) {
@@ -2222,4 +2422,7 @@ void rtadv_init(void)
 
 		exit(-1);
 	}
+
+	/* Register client disconnect handler */
+	hook_register(zserv_client_close, zebra_static_client_disconnect);
 }

@@ -1449,6 +1449,9 @@ int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routi
 		return NB_OK;
 
 	sid = nb_running_unset_entry(args->dnode);
+
+	static_srv6_ua_handle_ra(sid, false);
+
 	listnode_delete(srv6_sids, sid);
 	static_srv6_sid_del(sid);
 

@@ -105,6 +105,11 @@ enum zebra_if_flags {
 	 */
 	ZIF_FLAG_NEIGH_THROTTLE = (1 << 9),
 	ZIF_FLAG_NEIGH_THROTTLE_DISABLE = (1 << 10),
+
+	/* Staticd is waiting for peer link-local confirmation on this interface */
+	ZIF_FLAG_STATIC_PEER_LL_WAITING = (1 << 11),
+	/* Peer link-local confirmation has been received for this interface */
+	ZIF_FLAG_STATIC_PEER_LL_CONFIRMED = (1 << 12),
 };
 
 /* We snoop on ARP replies and NAs rxed on bridge ports if MH is
