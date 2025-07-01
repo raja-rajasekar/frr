@@ -262,6 +262,9 @@ struct zebra_if {
 
 	/* The description of the interface */
 	char *desc;
+
+	/* Confirmed peer link-local address for static uA Sids*/
+	struct in6_addr static_confirmed_peer_ll;
 };
 
 DECLARE_HOOK(zebra_if_extra_info, (struct vty * vty, struct interface *ifp),

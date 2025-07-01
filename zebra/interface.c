@@ -142,6 +142,8 @@ static int if_zebra_new_hook(struct interface *ifp)
 
 	memset(&zebra_if->neigh_mac[0], 0, 6);
 
+	memset(&zebra_if->static_confirmed_peer_ll, 0, sizeof(struct in6_addr));
+
 	/* Initialize installed address chains tree. */
 	zebra_if->ipv4_subnets =
 		route_table_init_with_delegate(&zebra_if_table_delegate);

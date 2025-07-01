@@ -448,8 +448,76 @@ static int static_zebra_peer_ll_confirmation(ZAPI_CALLBACK_ARGS)
 	/* Process queued uA SID allocations for this interface */
 	static_process_queued_ua_sid_allocations(ifp);
 
-stream_failure:
 	return 0;
+
+stream_failure:
+	return -1;
+}
+
+static void static_zebra_peer_ll_change_handler(struct interface *ifp, struct in6_addr *new_ll_addr)
+{
+	struct static_if *sif;
+	struct listnode *node;
+	struct static_srv6_sid *sid;
+
+	assert(new_ll_addr);
+	sif = ifp->info;
+	if (!sif)
+		return;
+
+	DEBUGD(&static_dbg_srv6,
+	       "%s: Peer LL changed on interface %s to %pI6, Uninstall Existing sids and Reinstalling sid with new LL",
+	       __func__, ifp->name, new_ll_addr);
+
+	/* Update next-hop to new LL and reinstall SIDs (alloc + install) */
+	for (ALL_LIST_ELEMENTS_RO(srv6_sids, node, sid)) {
+		if (strcmp(sid->attributes.ifname, ifp->name) == 0 &&
+		    sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_X_NEXT_CSID) {
+			if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID)) {
+				static_zebra_release_srv6_sid(sid);
+				UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID);
+			}
+
+			if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA)) {
+				static_zebra_srv6_sid_uninstall(sid);
+				UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA);
+			}
+
+			sid->attributes.nh6 = *new_ll_addr;
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Updated SID %pFX next-hop to %pI6 for reinstallation", __func__,
+			       &sid->addr, &sid->attributes.nh6);
+
+			static_zebra_request_srv6_sid(sid);
+		}
+	}
+}
+
+static int static_zebra_peer_ll_change(ZAPI_CALLBACK_ARGS)
+{
+	struct stream *s;
+	ifindex_t ifindex;
+	struct interface *ifp;
+	struct in6_addr new_ll_addr;
+
+	s = zclient->ibuf;
+	STREAM_GETL(s, ifindex);
+
+	/* Get the new LL address */
+	STREAM_GET(&new_ll_addr, s, sizeof(struct in6_addr));
+
+	ifp = if_lookup_by_index(ifindex, vrf_id);
+	if (!ifp) {
+		zlog_err("%s: Peer link-local change for unknown interface %u", __func__, ifindex);
+		return -1;
+	}
+
+	static_zebra_peer_ll_change_handler(ifp, &new_ll_addr);
+
+	return 0;
+
+stream_failure:
+	return -1;
 }
 
 /* Interface addition message from zebra. */
@@ -1820,6 +1888,7 @@ static zclient_handler *const static_handlers[] = {
 	[ZEBRA_SRV6_LOCATOR_DELETE] = static_zebra_process_srv6_locator_delete,
 	[ZEBRA_SRV6_SID_NOTIFY] = static_zebra_srv6_sid_notify,
 	[ZEBRA_PEER_LL_CONFIRMATION] = static_zebra_peer_ll_confirmation,
+	[ZEBRA_PEER_LL_CHANGE] = static_zebra_peer_ll_change,
 };
 
 void static_zebra_init(void)

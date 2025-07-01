@@ -459,6 +459,7 @@ extern void zebra_interface_radv_disable(ZAPI_HANDLER_ARGS);
 extern void zebra_interface_radv_enable(ZAPI_HANDLER_ARGS);
 extern void zebra_send_peer_ll_confirmation(struct zserv *client, struct interface *ifp);
 extern void zebra_send_peer_ll_confirmation_on_peer_ra(struct interface *ifp);
+extern void zebra_notify_static_peer_ll_change(struct interface *ifp, struct in6_addr *new_ll_addr);
 
 extern uint32_t rtadv_get_interfaces_configured_from_bgp(void);
 extern uint32_t rtadv_get_interfaces_configured_from_static(void);
