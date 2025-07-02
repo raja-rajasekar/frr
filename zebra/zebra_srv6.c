@@ -980,26 +980,17 @@ static bool zebra_srv6_sid_compose(struct in6_addr *sid_value,
 	return true;
 }
 
-/**
- * Return the parent locator and function of an SRv6 SID.
- *
- * @param sid_value SRv6 SID address to be decomposed
- * @param sid_block Parent block of the SRv6 SID
- * @param locator Parent locator of the SRv6 SID
- * @param sid_func Function part of the SID
- * @param sid_wide_func Wide function of the SID
- * @return True if success, False otherwise
+/*
+ * Decompose an SRv6 SID to find its parent locator and extract function bits.
+ * For explicit SID allocation, uses the specified expected locator name.
+ * Validates that the SID belongs to the expected locator's prefix.
  */
 static bool zebra_srv6_sid_decompose(struct in6_addr *sid_value,
 				     struct zebra_srv6_sid_block **sid_block,
-				     struct srv6_locator **locator,
-				     uint32_t *sid_func, uint32_t *sid_wide_func)
+				     struct srv6_locator **locator, uint32_t *sid_func,
+				     uint32_t *sid_wide_func, const char *expected_locator_name)
 {
-	struct zebra_srv6 *srv6 = zebra_srv6_get_default();
-	struct srv6_locator *l;
-	struct zebra_srv6_sid_block *b;
 	struct srv6_sid_format *format;
-	struct listnode *node;
 	struct prefix_ipv6 tmp_prefix;
 	uint8_t offset, func_len;
 
@@ -1018,122 +1009,67 @@ static bool zebra_srv6_sid_decompose(struct in6_addr *sid_value,
 	tmp_prefix.prefixlen = IPV6_MAX_BITLEN;
 	tmp_prefix.prefix = *sid_value;
 
-	/*
-	 * Lookup the parent locator of the SID and return the locator and
-	 * the function of the SID.
-	 */
-	for (ALL_LIST_ELEMENTS_RO(srv6->locators, node, l)) {
-		/*
-		 * Check if the locator prefix includes the temporary prefix
-		 * representing the SID.
-		 */
-		if (prefix_match((struct prefix *)&l->prefix,
-				 (struct prefix *)&tmp_prefix)) {
-			format = l->sid_format;
+	/* If expected locator name is provided, use only that locator */
+	if (expected_locator_name && strlen(expected_locator_name) > 0) {
+		struct srv6_locator *expected_loc = zebra_srv6_locator_lookup(expected_locator_name);
 
-			if (format) {
-				offset = format->block_len + format->node_len;
-				func_len = format->function_len;
-			} else {
-				offset = l->block_bits_length +
-					 l->node_bits_length;
-				func_len = l->function_bits_length;
-			}
-
-			for (uint8_t idx = 0; idx < func_len; idx++) {
-				uint8_t tidx = offset + idx;
-				*sid_func |= (sid_value->s6_addr[tidx / 8] &
-					      (0x1 << (7 - tidx % 8)))
-					     << (((func_len - 1 - idx) / 8) * 8);
-			}
-
-			/*
-			 * If function comes from the Wide LIB range, we also
-			 * need to get the Wide function.
-			 */
-			if (format && format->type == SRV6_SID_FORMAT_TYPE_USID) {
-				if (*sid_func >= format->config.usid.wlib_start &&
-				    *sid_func <= format->config.usid.wlib_end) {
-					format = l->sid_format;
-
-					offset = format->block_len +
-						 format->node_len +
-						 format->function_len;
-
-					for (uint8_t idx = 0; idx < 16; idx++) {
-						uint8_t tidx = offset + idx;
-						*sid_wide_func |= (sid_value->s6_addr[tidx / 8] &
-								   (0x1 << (7 - tidx % 8)))
-								  << (((16 - 1 - idx) / 8) * 8);
-					}
-				}
-			}
-
-			*locator = l;
-			*sid_block = l->sid_block;
-
-			return true;
+		if (!expected_loc) {
+			zlog_err("%s: Expected locator %s not found", __func__,
+				 expected_locator_name);
+			return false;
 		}
-	}
 
-	/*
-	 * If we arrive here, the SID does not belong to any locator.
-	 * Then, let's try to find the parent block from which the SID
-	 * has been allocated.
-	 */
+		if (!prefix_match((struct prefix *)&expected_loc->prefix,
+				  (struct prefix *)&tmp_prefix)) {
+			zlog_err("%s: SID %pI6 does not belong to locator %s (prefix %pFX)",
+				 __func__, sid_value, expected_locator_name, &expected_loc->prefix);
+			return false;
+		}
 
-	/*
-	 * Lookup the parent block of the SID and return the block and
-	 * the function of the SID.
-	 */
-	for (ALL_LIST_ELEMENTS_RO(srv6->sid_blocks, node, b)) {
-		/*
-		 * Check if the block prefix includes the temporary prefix
-		 * representing the SID
-		 */
-		if (prefix_match((struct prefix *)&b->prefix,
-				 (struct prefix *)&tmp_prefix)) {
-			format = b->sid_format;
+		format = expected_loc->sid_format;
 
-			if (!format)
-				continue;
-
+		if (format) {
 			offset = format->block_len + format->node_len;
 			func_len = format->function_len;
+		} else {
+			offset = expected_loc->block_bits_length + expected_loc->node_bits_length;
+			func_len = expected_loc->function_bits_length;
+		}
 
-			for (uint8_t idx = 0; idx < func_len; idx++) {
-				uint8_t tidx = offset + idx;
-				*sid_func |= (sid_value->s6_addr[tidx / 8] &
-					      (0x1 << (7 - tidx % 8)))
-					     << ((func_len - 1 - idx) / 8);
-			}
+		for (uint8_t idx = 0; idx < func_len; idx++) {
+			uint8_t tidx = offset + idx;
+			*sid_func |= (sid_value->s6_addr[tidx / 8] & (0x1 << (7 - tidx % 8)))
+				     << (((func_len - 1 - idx) / 8) * 8);
+		}
 
-			/*
-			 * If function comes from the Wide LIB range, we also
-			 * need to get the Wide function.
-			 */
+		/*
+		 * If function comes from the Wide LIB range, we also
+		 * need to get the Wide function.
+		 */
+		if (format && format->type == SRV6_SID_FORMAT_TYPE_USID) {
 			if (*sid_func >= format->config.usid.wlib_start &&
 			    *sid_func <= format->config.usid.wlib_end) {
-				format = b->sid_format;
+				format = expected_loc->sid_format;
 
-				offset = format->block_len + format->node_len +
-					 format->function_len;
+				offset = format->block_len + format->node_len + format->function_len;
 
 				for (uint8_t idx = 0; idx < 16; idx++) {
 					uint8_t tidx = offset + idx;
-					*sid_wide_func |=
-						(sid_value->s6_addr[tidx / 8] &
-						 (0x1 << (7 - tidx % 8)))
-						<< (((16 - 1 - idx) / 8) * 8);
+					*sid_wide_func |= (sid_value->s6_addr[tidx / 8] &
+							   (0x1 << (7 - tidx % 8)))
+							  << (((16 - 1 - idx) / 8) * 8);
 				}
 			}
-
-			*sid_block = b;
-
-			return true;
 		}
+
+		*locator = expected_loc;
+		*sid_block = expected_loc->sid_block;
+
+		return true;
 	}
 
+	/* If we get here, expected_locator_name was not provided (should not happen in explicit config) */
+	zlog_err("%s: No expected locator name provided for explicit SID allocation", __func__);
 	return false;
 }
 
@@ -1550,8 +1486,8 @@ static int get_srv6_sid_explicit(struct zebra_srv6_sid **sid, struct srv6_sid_ct
 	}
 
 	/* Get parent locator and function of the provided SID */
-	if (!zebra_srv6_sid_decompose(sid_value, &block, &locator, &sid_func,
-				      &sid_func_wide)) {
+	if (!zebra_srv6_sid_decompose(sid_value, &block, &locator, &sid_func, &sid_func_wide,
+				      locator_name)) {
 		zlog_err("%s: invalid SM request arguments: parent block/locator not found for SID %pI6",
 			 __func__, sid_value);
 		return -1;
