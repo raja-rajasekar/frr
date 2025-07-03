@@ -1270,7 +1270,6 @@ static int frr_grpc_notification_send(const char *xpath, struct list *arguments)
 	grpc::ChannelArguments args;
 	args.SetString(GRPC_ARG_PRIMARY_USER_AGENT_STRING, "frr_grpc_client");
 	args.SetString("grpc.lb_policy_name", "pick_first");
-	args.SetString("grpc.service_config_disable_resolution", "true");
 
 	std::string vrf_address = "127.0.0.1:4221";
 	args.SetString("grpc.target", vrf_address);
