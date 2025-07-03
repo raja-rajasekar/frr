@@ -826,8 +826,10 @@ void if_delete_update(struct interface **pifp)
 void if_handle_vrf_change(struct interface *ifp, vrf_id_t vrf_id)
 {
 	vrf_id_t old_vrf_id;
+	struct zebra_if *zif;
 
 	old_vrf_id = ifp->vrf->vrf_id;
+	zif = ifp->info;
 
 	/* Uninstall connected routes. */
 	if_uninstall_connected(ifp);
@@ -837,6 +839,12 @@ void if_handle_vrf_change(struct interface *ifp, vrf_id_t vrf_id)
 
 	/* Delete all neighbor addresses learnt through IPv6 RA */
 	if_down_del_nbr_connected(ifp);
+	/* Clear peer LL confirmation state if staticd has configured RA on this interface */
+	if (zif && CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+		UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
+		SET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
+		memset(&zif->static_confirmed_peer_ll, 0, sizeof(struct in6_addr));
+	}
 
 	/* Send out notification on interface VRF change. */
 	/* This is to issue a DELETE, as appropriate. */
@@ -1073,6 +1081,12 @@ void if_down(struct interface *ifp)
 
 	/* Delete all neighbor addresses learnt through IPv6 RA */
 	if_down_del_nbr_connected(ifp);
+	/* Clear peer LL confirmation state if staticd has configured RA on this interface */
+	if (CHECK_FLAG(zif->rtadv.ra_configured, STATIC_RA_CONFIGURED)) {
+		UNSET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_CONFIRMED);
+		SET_FLAG(zif->flags, ZIF_FLAG_STATIC_PEER_LL_WAITING);
+		memset(&zif->static_confirmed_peer_ll, 0, sizeof(struct in6_addr));
+	}
 }
 
 void if_refresh(struct interface *ifp)
