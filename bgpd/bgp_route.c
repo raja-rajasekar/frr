@@ -15740,7 +15740,8 @@ static int peer_adj_routes_brief(struct vty *vty, struct peer *peer, afi_t afi, 
             /* Calculate path metrics */
             struct bgp_path_info *pi;
             for (pi = bgp_dest_get_bgp_path_info(dest); pi; pi = pi->next) {
-                if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
+                if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH) ||
+				CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
                     multi_path_count++;
                 if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
                     best_path_selected = true;
