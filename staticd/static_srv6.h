@@ -67,6 +67,15 @@ struct static_srv6_locator {
 extern struct list *srv6_locators;
 extern struct list *srv6_sids;
 
+/* Global flag to control Feature for SRv6 uN and uA SID functionality */
+extern bool static_srv6_un_ua_sids_enabled;
+
+/* Macro to check if Feature for SRv6 uN and uA SIDs are enabled */
+#define STATIC_SRV6_UN_UA_FEATURE_ENABLED(sid)                                                     \
+	(sid && static_srv6_un_ua_sids_enabled &&                                                  \
+	 (sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_NEXT_CSID ||                                 \
+	  sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_X_NEXT_CSID))
+
 /*
  * Allocate an SRv6 SID object and initialize its fields, SID address and
  * behavor.
@@ -81,6 +90,10 @@ extern struct static_srv6_sid *static_srv6_sid_lookup(struct prefix_ipv6 *sid_ad
  */
 extern void static_srv6_sid_del(struct static_srv6_sid *sid);
 extern void static_srv6_ua_sids_cleanup_queued_for_peer_ll(void);
+
+/* Functions to control uN and uA SID functionality */
+extern void static_srv6_un_ua_sids_disable(void);
+extern void static_srv6_un_ua_sids_enable(void);
 
 /* Initialize SRv6 data structures. */
 extern void static_srv6_init(void);

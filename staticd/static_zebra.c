@@ -430,23 +430,27 @@ static int static_zebra_peer_ll_confirmation(ZAPI_CALLBACK_ARGS)
 		return -1;
 	}
 
-	/* Set the peer link-local confirmation flag on staticd's interface structure */
-	sif = ifp->info;
-	if (!sif) {
-		zlog_warn("%s: No static interface info for %s", __func__, ifp->name);
-		return -1;
-	}
+	if (static_srv6_un_ua_sids_enabled) {
+		sif = ifp->info;
+		if (!sif) {
+			zlog_warn("%s: No static interface info for %s", __func__, ifp->name);
+			return -1;
+		}
 
-	/* Set the peer link-local confirmation flag and clear the waiting flag */
-	SET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
-	UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
+		/* Set the peer link-local confirmation flag and clear the waiting flag */
+		SET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
+		UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
 
-	DEBUGD(&static_dbg_srv6,
-	       "%s: Peer link-local confirmation received for interface %s (ifindex %u)", __func__,
-	       ifp->name, ifindex);
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Peer link-local confirmation received for interface %s (ifindex %u)",
+		       __func__, ifp->name, ifindex);
 
-	/* Process queued uA SID allocations for this interface */
-	static_process_queued_ua_sid_allocations(ifp);
+		/* Process queued uA SID allocations for this interface */
+		static_process_queued_ua_sid_allocations(ifp);
+	} else
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Ignoring peer link-local confirmation for interface %s (ifindex %u) as Feature for SRv6 uN/uA SIDs is disabled",
+		       __func__, ifp->name, ifindex);
 
 	return 0;
 
@@ -512,7 +516,12 @@ static int static_zebra_peer_ll_change(ZAPI_CALLBACK_ARGS)
 		return -1;
 	}
 
-	static_zebra_peer_ll_change_handler(ifp, &new_ll_addr);
+	if (static_srv6_un_ua_sids_enabled)
+		static_zebra_peer_ll_change_handler(ifp, &new_ll_addr);
+	else
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Ignoring peer link-local change for interface %s (ifindex %u) as Feature for SRv6 uN/uA SIDs is disabled",
+		       __func__, ifp->name, ifindex);
 
 	return 0;
 
@@ -573,24 +582,29 @@ static int static_ifp_up(struct interface *ifp)
 
 	static_ifindex_update(ifp, true);
 
-	/* Re-queue SIDs that need peer LL confirmation for this interface */
-	if (srv6_sids) {
-		for (ALL_LIST_ELEMENTS_RO(srv6_sids, node, sid)) {
-			if (static_srv6_ua_needs_ra(sid) &&
-			    strcmp(sid->attributes.ifname, ifp->name) == 0 &&
-			    !CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID) &&
-			    !static_ua_sid_is_queued_for_peer_ll(sid) &&
-			    !static_peer_ll_confirmation_received(ifp)) {
-				DEBUGD(&static_dbg_srv6,
-				       "%s: Interface %s up, re-queuing SID %pFX for peer LL confirmation",
-				       __func__, ifp->name, &sid->addr);
+	if (static_srv6_un_ua_sids_enabled) {
+		/* Re-queue SIDs that need peer LL confirmation for this interface */
+		if (srv6_sids) {
+			for (ALL_LIST_ELEMENTS_RO(srv6_sids, node, sid)) {
+				if (static_srv6_ua_needs_ra(sid) && sid->attributes.ifname[0] &&
+				    strcmp(sid->attributes.ifname, ifp->name) == 0 &&
+				    !CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID) &&
+				    !static_ua_sid_is_queued_for_peer_ll(sid) &&
+				    !static_peer_ll_confirmation_received(ifp)) {
+					DEBUGD(&static_dbg_srv6,
+					       "%s: Interface %s up, re-queuing SID %pFX for peer LL confirmation",
+					       __func__, ifp->name, &sid->addr);
 
-				static_queue_ua_sid_allocation_after_peer_ll(sid);
+					static_queue_ua_sid_allocation_after_peer_ll(sid);
+				}
 			}
 		}
-	}
 
-	static_ifp_srv6_sids_update(ifp, true);
+		static_ifp_srv6_sids_update(ifp, true);
+	} else
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Ignoring interface %s up as Feature for SRv6 uN/uA SIDs is disabled",
+		       __func__, ifp->name);
 
 	return 0;
 }
@@ -602,48 +616,54 @@ static int static_ifp_down(struct interface *ifp)
 
 	static_ifindex_update(ifp, false);
 
-	/* Clear peer LL flags when interface goes down */
-	sif = ifp->info;
-	if (sif) {
-		UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
-		UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
-	}
-
-	/* Remove SIDs from peer LL waiting queue for this interface */
-	current = peer_ll_waiting_queue_head;
-	while (current) {
-		next = current->next;
-
-		if (strcmp(current->sid->attributes.ifname, ifp->name) == 0) {
-			DEBUGD(&static_dbg_srv6,
-			       "%s: Interface %s down, removing SID %pFX from peer LL waiting queue",
-			       __func__, ifp->name, &current->sid->addr);
-
-			/* Remove from queue */
-			if (current == peer_ll_waiting_queue_head) {
-				peer_ll_waiting_queue_head = next;
-				if (!peer_ll_waiting_queue_head)
-					peer_ll_waiting_queue_tail = NULL;
-			} else {
-				struct static_peer_ll_waiting_queue *prev =
-					peer_ll_waiting_queue_head;
-				while (prev && prev->next != current)
-					prev = prev->next;
-				if (prev)
-					prev->next = next;
-				if (current == peer_ll_waiting_queue_tail)
-					peer_ll_waiting_queue_tail = prev;
-			}
-
-			UNSET_FLAG(current->sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL);
-
-			XFREE(MTYPE_STATIC_PEER_LL_WAITING_QUEUE, current);
+	if (static_srv6_un_ua_sids_enabled) {
+		/* Clear peer LL flags when interface goes down */
+		sif = ifp->info;
+		if (sif) {
+			UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_WAITING);
+			UNSET_FLAG(sif->flags, STATIC_IF_FLAG_PEER_LL_CONFIRMED);
 		}
 
-		current = next;
-	}
+		/* Remove SIDs from peer LL waiting queue for this interface */
+		current = peer_ll_waiting_queue_head;
+		while (current) {
+			next = current->next;
 
-	static_ifp_srv6_sids_update(ifp, false);
+			if (strcmp(current->sid->attributes.ifname, ifp->name) == 0) {
+				DEBUGD(&static_dbg_srv6,
+				       "%s: Interface %s down, removing SID %pFX from peer LL waiting queue",
+				       __func__, ifp->name, &current->sid->addr);
+
+				/* Remove from queue */
+				if (current == peer_ll_waiting_queue_head) {
+					peer_ll_waiting_queue_head = next;
+					if (!peer_ll_waiting_queue_head)
+						peer_ll_waiting_queue_tail = NULL;
+				} else {
+					struct static_peer_ll_waiting_queue *prev =
+						peer_ll_waiting_queue_head;
+					while (prev && prev->next != current)
+						prev = prev->next;
+					if (prev)
+						prev->next = next;
+					if (current == peer_ll_waiting_queue_tail)
+						peer_ll_waiting_queue_tail = prev;
+				}
+
+				UNSET_FLAG(current->sid->flags,
+					   STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL);
+
+				XFREE(MTYPE_STATIC_PEER_LL_WAITING_QUEUE, current);
+			}
+
+			current = next;
+		}
+		/* Update all SIDs for this interface */
+		static_ifp_srv6_sids_update(ifp, false);
+	} else
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Ignoring interface %s down as Feature for SRv6 uN/uA SIDs is disabled",
+		       __func__, ifp->name);
 
 	return 0;
 }
@@ -1173,6 +1193,13 @@ void static_zebra_srv6_sid_install(struct static_srv6_sid *sid)
 	if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA))
 		return;
 
+	if (!STATIC_SRV6_UN_UA_FEATURE_ENABLED(sid)) {
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Feature for SRv6 uN/uA SIDs disabled, skipping install for SID %pFX",
+		       __func__, &sid->addr);
+		return;
+	}
+
 	/* Check if SID is queued for peer LL confirmation */
 	if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_UA_SID_QUEUED_FOR_PEER_LL)) {
 		DEBUGD(&static_dbg_srv6,
@@ -1483,6 +1510,13 @@ extern void static_zebra_request_srv6_sid(struct static_srv6_sid *sid)
 	if (!sid)
 		return;
 
+	if (!STATIC_SRV6_UN_UA_FEATURE_ENABLED(sid)) {
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Feature for SRv6 uN/uA SIDs disabled, skipping SID %pFX", __func__,
+		       &sid->addr);
+		return;
+	}
+
 	if (!sid->locator) {
 		static_zebra_srv6_manager_get_locator(sid->locator_name);
 		return;
@@ -1745,6 +1779,10 @@ static int static_zebra_process_srv6_locator_internal(struct srv6_locator *locat
 
 	/* Request SIDs from the locator */
 	request_srv6_sids(loc);
+	if (!static_srv6_un_ua_sids_enabled)
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Ignored SRv6 SIDs request for locator %s as Feature for SRv6 uN/uA SIDs is disabled",
+		       __func__, loc->name);
 
 	return 0;
 }
@@ -1804,20 +1842,26 @@ static int static_zebra_process_srv6_locator_delete(ZAPI_CALLBACK_ARGS)
 		if (sid->locator != locator)
 			continue;
 
-
 		DEBUGD(&static_dbg_srv6, "%s: Deleting SRv6 SID (locator %s, sid %pFX)", __func__,
 		       locator->name, &sid->addr);
 
-		if (static_ua_sid_is_queued_for_peer_ll(sid))
-			static_remove_ua_sid_queued_for_peer_ll(sid);
-		/*
-		 * Uninstall the SRv6 SID from the forwarding plane
-		 * through Zebra
-		 */
-		if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA)) {
-			static_zebra_srv6_sid_uninstall(sid);
-			UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA);
-		}
+		if (static_srv6_un_ua_sids_enabled) {
+			if (static_ua_sid_is_queued_for_peer_ll(sid))
+				static_remove_ua_sid_queued_for_peer_ll(sid);
+			/*
+			 * Uninstall the SRv6 SID from the forwarding plane
+			 * through Zebra
+			 */
+			if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA)) {
+				static_zebra_srv6_sid_uninstall(sid);
+				UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA);
+			}
+		} else
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Ignoring SRv6 SIDs deletion for locator %s as Feature for SRv6 uN/uA SIDs is disabled",
+			       __func__, locator->name);
+
+		sid->locator = NULL;
 	}
 
 	listnode_delete(srv6_locators, locator);
@@ -1878,13 +1922,19 @@ static int static_zebra_srv6_sid_notify(ZAPI_CALLBACK_ARGS)
 
 		SET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID);
 
-		/*
-		 * Install the new SRv6 End SID in the forwarding plane through
-		 * Zebra
-		 */
-		static_zebra_srv6_sid_install(sid);
+		if (STATIC_SRV6_UN_UA_FEATURE_ENABLED(sid)) {
+			/* Install new SRv6 End SID in forwarding plane through Zebra */
+			static_zebra_srv6_sid_install(sid);
 
-		SET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA);
+			SET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA);
+		} else {
+			/* If uN/uA SIDs are disabled, release the SID immediately */
+			DEBUGD(&static_dbg_srv6,
+			       "%s: Feature for SRv6 uN/uA SIDs disabled, releasing SID %pFX",
+			       __func__, &sid->addr);
+			static_zebra_release_srv6_sid(sid);
+			UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID);
+		}
 
 		break;
 	case ZAPI_SRV6_SID_RELEASED:

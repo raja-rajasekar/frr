@@ -22,6 +22,9 @@
 struct list *srv6_locators;
 struct list *srv6_sids;
 
+/* Global flag to control uN and uA SID functionality */
+bool static_srv6_un_ua_sids_enabled = false;
+
 DEFINE_MTYPE_STATIC(STATIC, STATIC_SRV6_LOCATOR, "Static SRv6 locator");
 DEFINE_MTYPE_STATIC(STATIC, STATIC_SRV6_SID, "Static SRv6 SID");
 
@@ -145,6 +148,14 @@ void delete_static_srv6_locator(void *val)
  */
 void static_srv6_sid_del(struct static_srv6_sid *sid)
 {
+	if (!STATIC_SRV6_UN_UA_FEATURE_ENABLED(sid)) {
+		DEBUGD(&static_dbg_srv6,
+		       "%s: Feature for SRv6 uN/uA SIDs disabled, skipping Release and Uninstall for SID %pFX",
+		       __func__, &sid->addr);
+		XFREE(MTYPE_STATIC_SRV6_SID, sid);
+
+		return;
+	}
 	if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID)) {
 		static_zebra_release_srv6_sid(sid);
 		UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID);
@@ -165,6 +176,9 @@ void delete_static_srv6_sid(void *val)
 
 void static_zebra_request_srv6_sids(void)
 {
+	if (!static_srv6_un_ua_sids_enabled)
+		return;
+
 	struct static_srv6_sid *sid;
 	struct listnode *node;
 
@@ -193,4 +207,73 @@ void static_srv6_cleanup(void)
 		list_delete(&srv6_locators);
 	if (srv6_sids)
 		list_delete(&srv6_sids);
+}
+
+/*
+ * Disable uN and uA SID functionality.
+ * This will:
+ * 1. Delete all uN and uA SIDs from zebra
+ * 2. Clean up queued uA SIDs (if present)
+ * 3. Disable RA for uA SIDs (Where ever applicable)
+ */
+void static_srv6_un_ua_sids_disable(void)
+{
+	struct static_srv6_sid *sid;
+	struct listnode *node, *nnode;
+
+	if (!static_srv6_un_ua_sids_enabled)
+		return;
+
+	zlog_info("%s: Disabling Feature for SRv6 uN and uA SID functionality", __func__);
+
+	/* Iterate through all SIDs and disable uN and uA ones */
+	for (ALL_LIST_ELEMENTS(srv6_sids, node, nnode, sid)) {
+		if (sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_NEXT_CSID ||
+		    sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_X_NEXT_CSID) {
+			/* For uA SIDs, disable RA and clean up queue */
+			if (sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_X_NEXT_CSID)
+				static_srv6_ua_handle_ra(sid, false);
+
+			/* Release SID if allocated */
+			if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID)) {
+				static_zebra_release_srv6_sid(sid);
+				UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_VALID);
+			}
+
+			/* Remove from zebra if installed */
+			if (CHECK_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA)) {
+				static_zebra_srv6_sid_uninstall(sid);
+				UNSET_FLAG(sid->flags, STATIC_FLAG_SRV6_SID_SENT_TO_ZEBRA);
+			}
+		}
+	}
+
+	/* Clean up any remaining queued uA SIDs */
+	static_srv6_ua_sids_cleanup_queued_for_peer_ll();
+
+	static_srv6_un_ua_sids_enabled = false;
+}
+
+/*
+ * Enable uN and uA SID functionality.
+ * This will treat all uN and uA SIDs as if new config has come in.
+ */
+void static_srv6_un_ua_sids_enable(void)
+{
+	struct static_srv6_sid *sid;
+	struct listnode *node;
+
+	if (static_srv6_un_ua_sids_enabled)
+		return;
+
+	zlog_info("%s: Enabling Feature for SRv6 uN and uA SID functionality", __func__);
+	static_srv6_un_ua_sids_enabled = true;
+	/* Iterate through all SIDs and re-enable uN and uA ones */
+	for (ALL_LIST_ELEMENTS_RO(srv6_sids, node, sid)) {
+		if (sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_NEXT_CSID ||
+		    sid->behavior == SRV6_ENDPOINT_BEHAVIOR_END_X_NEXT_CSID) {
+			/* Request SID allocation and installation */
+			static_zebra_request_srv6_sid(sid);
+		}
+	}
 }
