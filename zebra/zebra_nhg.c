@@ -3505,11 +3505,6 @@ backups_done:
 
 		remove = new_nhe;
 
-		if (old_re && old_re->type == re->type && old_re->instance == re->instance &&
-		    new_nhe != old_re->nhe)
-			new_nhe = zebra_nhg_rib_compare_old_nhe(rn, re, new_nhe,
-								old_re->nhe);
-
 		if (IS_ZEBRA_DEBUG_NHG_DETAIL)
 			zlog_debug("%s: re %p CHANGED: nhe %p (%pNG) => new_nhe %p (%pNG) rib_find_nhe returned %p (%pNG) refcnt: %d",
 				   __func__, re, re->nhe, re->nhe, new_nhe, new_nhe, remove, remove,
