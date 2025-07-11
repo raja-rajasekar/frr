@@ -1310,25 +1310,6 @@ static int frr_grpc_notification_send(const char *xpath, struct list *arguments)
 		zlog_err("Failed to open gRPC stream for SubscriptionCache");
 		return -1;
 	}
-	status = stream->Finish();
-	if (!status.ok()) {
-		switch (status.error_code()) {
-		case grpc::StatusCode::CANCELLED:
-			zlog_err("RPC cancelled");
-			break;
-		case grpc::StatusCode::DEADLINE_EXCEEDED:
-			zlog_err("RPC timeout");
-			break;
-		case grpc::StatusCode::UNAVAILABLE:
-			zlog_err("Server unavailable: %s", status.error_message().c_str());
-			break;
-		default:
-			zlog_err("RPC failed: code=%d message='%s'", status.error_code(),
-				 status.error_message().c_str());
-			break;
-		}
-		return -1;
-	}
 	grpc_debug("Telemetry data sucessfully sent via gRPC");
 	return 0;
 }
