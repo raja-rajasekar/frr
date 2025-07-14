@@ -4485,11 +4485,13 @@ dplane_route_update_internal(struct route_node *rn,
 		    (((dplane_ctx_get_nhe_id(ctx) == dplane_ctx_get_old_nhe_id(ctx)) &&
 		      (dplane_ctx_get_nhe_id(ctx) >= ZEBRA_NHG_PROTO_LOWER)) ||
 		     (dplane_ctx_get_op(ctx) == DPLANE_OP_ROUTE_UPDATE &&
+		      !RSYSTEM_ROUTE(dplane_ctx_get_type(ctx)) &&
 		      (CHECK_FLAG(flags, ZEBRA_FLAG_OFFLOADED) ||
 		       CHECK_FLAG(flags, ZEBRA_FLAG_TRAPPED) ||
 		       CHECK_FLAG(flags, ZEBRA_FLAG_OFFLOAD_FAILED))) ||
 		     ((dplane_ctx_get_nhe_id(ctx) == dplane_ctx_get_old_nhe_id(ctx)) &&
 		      (dplane_ctx_get_op(ctx) == DPLANE_OP_ROUTE_UPDATE) &&
+		      (!RSYSTEM_ROUTE(dplane_ctx_get_type(ctx))) &&
 		      (CHECK_FLAG(old_flags, ZEBRA_FLAG_OFFLOADED) ||
 		       CHECK_FLAG(old_flags, ZEBRA_FLAG_OFFLOAD_FAILED))))) {
 			struct nexthop *nexthop;
