@@ -1218,6 +1218,25 @@ DEFUN_YANG (no_static_srv6, no_static_srv6_cmd,
 	return nb_cli_apply_changes(vty, "%s", xpath);
 }
 
+/* Command to control uN and uA SID functionality */
+DEFPY_YANG(static_srv6_un_ua_sids_control, static_srv6_un_ua_sids_control_cmd, "[no] enable",
+	   NO_STR "Enable/disable uN and uA SID functionality\n")
+{
+	char xpath[XPATH_MAXLEN];
+
+	snprintf(xpath, sizeof(xpath), FRR_STATIC_SRV6_INFO_KEY_XPATH, "frr-staticd:staticd",
+		 "staticd", VRF_DEFAULT_NAME);
+	strlcat(xpath, "/enable", sizeof(xpath));
+
+	if (no) {
+		nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, NULL);
+	} else {
+		nb_cli_enqueue_change(vty, xpath, NB_OP_CREATE, "true");
+	}
+
+	return nb_cli_apply_changes(vty, "%s", xpath);
+}
+
 DEFPY_YANG_NOSH (static_srv6_sids, static_srv6_sids_cmd,
       "[no] static-sids",
 	  NO_STR
@@ -1748,6 +1767,13 @@ static void static_segment_routing_cli_show_end(struct vty *vty, const struct ly
 static void static_srv6_cli_show(struct vty *vty, const struct lyd_node *dnode, bool show_defaults)
 {
 	vty_out(vty, " srv6\n");
+
+	/* Show enable if it's enabled (not default) */
+	if (yang_dnode_exists(dnode, "enable")) {
+		bool enable = yang_dnode_get_bool(dnode, "enable");
+		if (enable || show_defaults)
+			vty_out(vty, "  enable\n");
+	}
 }
 
 static void static_srv6_cli_show_end(struct vty *vty, const struct lyd_node *dnode)
@@ -1963,6 +1989,7 @@ DEFPY_YANG(debug_staticd, debug_staticd_cmd,
 	return CMD_SUCCESS;
 }
 
+
 DEFPY(staticd_show_bfd_routes, staticd_show_bfd_routes_cmd,
       "show bfd static route [json]$isjson",
       SHOW_STR
@@ -2025,6 +2052,7 @@ void static_vty_init(void)
 	install_element(CONFIG_NODE, &static_segment_routing_cmd);
 	install_element(SEGMENT_ROUTING_NODE, &static_srv6_cmd);
 	install_element(SEGMENT_ROUTING_NODE, &no_static_srv6_cmd);
+	install_element(SRV6_NODE, &static_srv6_un_ua_sids_control_cmd);
 	install_element(SRV6_NODE, &static_srv6_sids_cmd);
 	install_element(SRV6_SIDS_NODE, &srv6_sid_cmd);
 	install_element(SRV6_SIDS_NODE, &no_srv6_sid_cmd);

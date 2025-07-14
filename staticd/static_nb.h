@@ -158,6 +158,8 @@ int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routi
 	struct nb_cb_modify_args *args);
 int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routing_srv6_local_sids_sid_locator_name_destroy(
 	struct nb_cb_destroy_args *args);
+int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routing_srv6_enable_modify(
+	struct nb_cb_modify_args *args);
 
 /* Optional 'apply_finish' callbacks. */
 

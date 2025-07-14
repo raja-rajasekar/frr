@@ -1450,11 +1450,12 @@ int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routi
 
 	sid = nb_running_unset_entry(args->dnode);
 
-	static_srv6_ua_handle_ra(sid, false);
-
 	listnode_delete(srv6_sids, sid);
-	static_srv6_sid_del(sid);
 
+	if (STATIC_SRV6_UN_UA_FEATURE_ENABLED(sid))
+		static_srv6_ua_handle_ra(sid, false);
+
+	static_srv6_sid_del(sid);
 	return NB_OK;
 }
 
@@ -1477,7 +1478,12 @@ void routing_control_plane_protocols_control_plane_protocol_staticd_segment_rout
 
 	sid->locator = locator;
 
-	static_zebra_request_srv6_sid(sid);
+	if (STATIC_SRV6_UN_UA_FEATURE_ENABLED(sid))
+		static_zebra_request_srv6_sid(sid);
+	else
+		DEBUGD(&static_dbg_srv6,
+		       "Feature for SRv6 uN/uA SIDs disabled, skipping SID %pFX apply finish",
+		       &sid->addr);
 }
 
 /*
@@ -1695,5 +1701,27 @@ int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routi
 int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routing_srv6_local_sids_sid_locator_name_destroy(
 	struct nb_cb_destroy_args *args)
 {
+	return NB_OK;
+}
+
+/*
+ * XPath:
+ * /frr-routing:routing/control-plane-protocols/control-plane-protocol/frr-staticd:staticd/segment-routing/srv6/enable
+ */
+int routing_control_plane_protocols_control_plane_protocol_staticd_segment_routing_srv6_enable_modify(
+	struct nb_cb_modify_args *args)
+{
+	bool enabled;
+
+	if (args->event != NB_EV_APPLY)
+		return NB_OK;
+
+	enabled = yang_dnode_get_bool(args->dnode, NULL);
+
+	if (enabled)
+		static_srv6_un_ua_sids_enable();
+	else
+		static_srv6_un_ua_sids_disable();
+
 	return NB_OK;
 }

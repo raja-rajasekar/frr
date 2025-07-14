@@ -10,6 +10,8 @@
 #include "static_nb.h"
 #include "static_vty.h"
 
+/* prototype is in static_nb.h */
+
 /* clang-format off */
 
 const struct frr_yang_module_info frr_staticd_info = {
@@ -272,6 +274,12 @@ const struct frr_yang_module_info frr_staticd_info = {
 			.cbs = {
 				.modify = routing_control_plane_protocols_control_plane_protocol_staticd_segment_routing_srv6_local_sids_sid_locator_name_modify,
 				.destroy = routing_control_plane_protocols_control_plane_protocol_staticd_segment_routing_srv6_local_sids_sid_locator_name_destroy,
+			}
+		},
+		{
+			.xpath = "/frr-routing:routing/control-plane-protocols/control-plane-protocol/frr-staticd:staticd/segment-routing/srv6/enable",
+			.cbs = {
+				.modify = routing_control_plane_protocols_control_plane_protocol_staticd_segment_routing_srv6_enable_modify,
 			}
 		},
 		{
