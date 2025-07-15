@@ -2435,6 +2435,9 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 	zebra_rib_evaluate_rn_nexthops(rn, seq, rt_delete);
 	zebra_rib_evaluate_mpls(rn);
 
+	/* clear the flag which was set during connected route delete */
+	if (dest)
+		UNSET_FLAG(dest->flags, RIB_DEST_FORCE_RNH);
 done:
 
 	if (rn)
@@ -3200,6 +3203,13 @@ static void process_subq_early_route_delete(struct zebra_early_route *ere)
 
 	if (ere->re_nhe)
 		nh = ere->re_nhe->nhg.nexthop;
+
+	if (ere->re->type == ZEBRA_ROUTE_CONNECT || ere->re->type == ZEBRA_ROUTE_LOCAL) {
+		if (IS_ZEBRA_DEBUG_RIB_DETAILED)
+			zlog_debug("%s %pRN re %p is connected route, set force rnh flag", __func__,
+				   rn, ere->re);
+		SET_FLAG(dest->flags, RIB_DEST_FORCE_RNH);
+	}
 
 	/* Lookup same type route. */
 	RNODE_FOREACH_RE (rn, re) {
