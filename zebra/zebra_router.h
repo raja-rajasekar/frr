@@ -275,7 +275,7 @@ struct zebra_router {
 	bool all_linkdownv4, default_linkdownv4;
 	bool all_linkdownv6, default_linkdownv6;
 
-#define ZEBRA_DEFAULT_NHG_KEEP_TIMER 180
+#define ZEBRA_DEFAULT_NHG_KEEP_TIMER 5
 	uint32_t nhg_keep;
 
 	/* Should we allow non FRR processes to delete our routes */
