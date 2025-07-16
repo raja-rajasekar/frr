@@ -1311,7 +1311,8 @@ static int bgp_show_ethernet_vpn(struct vty *vty, struct prefix_rd *prd, enum bg
 	json_object *json = NULL;
 	json_object *json_array = NULL;
 	json_object *json_prefix_info = NULL;
-	int prefix_path_count, best_path_selected, multi_path_count, rd_prefix_cnt, add_rd_to_json;
+	int prefix_path_count, best_path_selected, rd_prefix_cnt, add_rd_to_json;
+	uint32_t multi_path_count = 0;
 
 	memset(rd_str, 0, RD_ADDRSTRLEN);
 
@@ -1458,10 +1459,11 @@ static int bgp_show_ethernet_vpn(struct vty *vty, struct prefix_rd *prd, enum bg
 				no_display = 1;
 				add_rd_to_json = 1;
 				prefix_path_count++;
-				if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
-					multi_path_count++;
-				if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+
+				if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
 					best_path_selected = 1;
+					multi_path_count = bgp_path_info_mpath_count(pi);
+				}
 			}
 
 			if (no_display)
@@ -1486,18 +1488,8 @@ static int bgp_show_ethernet_vpn(struct vty *vty, struct prefix_rd *prd, enum bg
 				if (no_display) {
 					json_object_int_add(json_prefix_info, "pathCount",
 							    prefix_path_count);
-					/* add +1 to the multipath count because
-					 * it does not include the best path
-					 * itself
-					 */
-					if (best_path_selected)
-						json_object_int_add(json_prefix_info,
-								    "multiPathCount",
-								    multi_path_count + 1);
-					else
-						json_object_int_add(json_prefix_info,
-								    "multiPathCount",
-								    multi_path_count);
+					json_object_int_add(json_prefix_info, "multiPathCount",
+							    multi_path_count);
 					json_flags = json_object_new_object();
 					if (best_path_selected)
 						json_object_boolean_true_add(json_flags,
@@ -2871,7 +2863,8 @@ static void evpn_show_route_rd(struct vty *vty, struct bgp *bgp, struct prefix_r
 	uint32_t prefix_cnt, path_cnt, rd_prefix_cnt;
 	json_object *json_rd = NULL;
 	int add_rd_to_json = 0;
-	int prefix_path_count, best_path_selected, multi_path_count;
+	int prefix_path_count, best_path_selected;
+	uint32_t multi_path_count = 0;
 
 	afi = AFI_L2VPN;
 	safi = SAFI_EVPN;
@@ -2969,10 +2962,11 @@ static void evpn_show_route_rd(struct vty *vty, struct bgp *bgp, struct prefix_r
 			add_rd_to_json = 1;
 
 			prefix_path_count++;
-			if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
-				multi_path_count++;
-			if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+
+			if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
 				best_path_selected = 1;
+				multi_path_count = bgp_path_info_mpath_count(pi);
+			}
 		}
 
 		if (json) {
@@ -2980,11 +2974,7 @@ static void evpn_show_route_rd(struct vty *vty, struct bgp *bgp, struct prefix_r
 			/* add +1 to the multipath count because it does
 			 * not include the best path itself
 			 */
-			if (best_path_selected)
-				json_object_int_add(json_prefix, "multiPathCount",
-						    multi_path_count + 1);
-			else
-				json_object_int_add(json_prefix, "multiPathCount", multi_path_count);
+			json_object_int_add(json_prefix, "multiPathCount", multi_path_count);
 
 			if (add_prefix_to_json) {
 				if (!brief)
@@ -3180,7 +3170,8 @@ static void evpn_show_all_routes(struct vty *vty, struct bgp *bgp, int type, jso
 	safi_t safi;
 	uint32_t prefix_cnt, path_cnt, rd_prefix_cnt;
 	int first = 1;
-	int prefix_path_count, best_path_selected, multi_path_count;
+	int prefix_path_count, best_path_selected;
+	uint32_t multi_path_count = 0;
 
 	afi = AFI_L2VPN;
 	safi = SAFI_EVPN;
@@ -3319,21 +3310,18 @@ static void evpn_show_all_routes(struct vty *vty, struct bgp *bgp, int type, jso
 				}
 
 				prefix_path_count++;
-				if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
-					multi_path_count++;
-				if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+
+				if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
 					best_path_selected = 1;
+					multi_path_count = bgp_path_info_mpath_count(pi);
+				}
 			}
 
 			if (json) {
 				json_object_int_add(json_prefix, "pathCount",
 						    prefix_path_count);
-				/*
-				 * add +1 to the multipath count because it does
-				 * not include the best path itself
-				 */
-				json_object_int_add(json_prefix, "multiPathCount",
-						    multi_path_count + 1);
+
+				json_object_int_add(json_prefix, "multiPathCount", multi_path_count);
 
 				if (add_prefix_to_json) {
 					if (!brief)

@@ -12364,7 +12364,8 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 	bool all = CHECK_FLAG(show_flags, BGP_SHOW_OPT_AFI_ALL);
 	bool detail_json = CHECK_FLAG(show_flags, BGP_SHOW_OPT_JSON_DETAIL);
 	bool detail_routes = CHECK_FLAG(show_flags, BGP_SHOW_OPT_ROUTES_DETAIL);
-	int prefix_path_count, best_path_selected, multi_path_count;
+	int prefix_path_count, best_path_selected;
+	uint32_t multi_path_count = 0;
 
 	if (brief && !use_json) {
 		vty_out(vty, "Brief cmd must be used only with json\n");
@@ -12727,10 +12728,11 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 			}
 			display++;
 			prefix_path_count++;
-			if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
-				multi_path_count++;
-			if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+
+			if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
 				best_path_selected = 1;
+				multi_path_count = bgp_path_info_mpath_count(pi);
+			}
 		}
 
 		if (display) {
@@ -12824,15 +12826,7 @@ static int bgp_show_table(struct vty *vty, struct bgp *bgp, afi_t afi, safi_t sa
 
 			if (json_detail_header || brief) {
 				vty_out(vty, "\"pathCount\":%d\n", prefix_path_count);
-				/*
-				 * add +1 to the multipath count because
-				 * it does not include the best path itself
-				 */
-				if (best_path_selected)
-					vty_out(vty, ",\"multiPathCount\":%d\n",
-						multi_path_count + 1);
-				else
-					vty_out(vty, ",\"multiPathCount\":%d\n", multi_path_count);
+				vty_out(vty, ",\"multiPathCount\":%d\n", multi_path_count);
 
 				vty_out(vty, ",\"flags\": { \n");
 				/* Display fib flags */
@@ -13290,7 +13284,8 @@ static void bgp_show_path_info(const struct prefix_rd *pfx_rd, struct bgp_dest *
 	json_object *json_header = NULL;
 	json_object *json_paths = NULL;
 	const struct prefix *p = bgp_dest_get_prefix(bgp_node);
-	int prefix_path_count = 0, best_path_selected = 0, multi_path_count = 0;
+	int prefix_path_count = 0, best_path_selected = 0;
+	uint32_t multi_path_count = 0;
 	json_object *json_flags = NULL;
 
 	for (pi = bgp_dest_get_bgp_path_info(bgp_node); pi; pi = pi->next) {
@@ -13332,20 +13327,18 @@ static void bgp_show_path_info(const struct prefix_rd *pfx_rd, struct bgp_dest *
 					     afi, safi, rpki_curr_state, json_paths);
 
 		prefix_path_count++;
-		if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
-			multi_path_count++;
-		if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+
+		if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
 			best_path_selected = 1;
+			multi_path_count = bgp_path_info_mpath_count(pi);
+		}
 	}
 
 	if (json && json_paths) {
 		json_object_object_add(json_header, "paths", json_paths);
 		json_object_int_add(json_header, "pathCount",
 				    prefix_path_count);
-		/* add +1 to the multipath count because it does
-		 * not include the best path itself
-		 */
-		json_object_int_add(json_header, "multiPathCount", multi_path_count + 1);
+		json_object_int_add(json_header, "multiPathCount", multi_path_count);
 		/* Display FIB flags */
 		bgp_fib_flags_info(vty, bgp, bgp_node, json_flags, best_path_selected);
 		json_object_object_add(json_header, "flags", json_flags);
@@ -15681,10 +15674,11 @@ static int peer_adj_routes_brief(struct vty *vty, struct peer *peer, afi_t afi, 
 
         /* Variables for this iteration */
         int prefix_path_count = 0;
-        int multi_path_count = 0;
+        uint32_t multi_path_count = 0;
         bool best_path_selected = false;
         bool found_match = false;
         char pfx_buf[PREFIX2STR_BUFFER];
+        
         prefix2str(rn_p, pfx_buf, sizeof(pfx_buf));
 
         if (type == bgp_show_adj_route_received) {
@@ -15702,17 +15696,18 @@ static int peer_adj_routes_brief(struct vty *vty, struct peer *peer, afi_t afi, 
             /* Calculate path metrics */
             struct bgp_path_info *pi;
             for (pi = bgp_dest_get_bgp_path_info(dest); pi; pi = pi->next) {
-                if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH))
-                    multi_path_count++;
-                if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+                if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
                     best_path_selected = true;
+                    multi_path_count = bgp_path_info_mpath_count(pi);
+                }
                 prefix_path_count++;
             }
         } else if (type == bgp_show_adj_route_advertised) {
             struct bgp_adj_out *adj;
             struct peer_af *paf;
-            RB_FOREACH(adj, bgp_adj_out_rb, &dest->adj_out) {
-                SUBGRP_FOREACH_PEER(adj->subgroup, paf) {
+            
+            RB_FOREACH (adj, bgp_adj_out_rb, &dest->adj_out) {
+                SUBGRP_FOREACH_PEER (adj->subgroup, paf) {
                     if (paf->peer == peer && adj->attr) {
                         found_match = true;
                         break;
@@ -15721,18 +15716,16 @@ static int peer_adj_routes_brief(struct vty *vty, struct peer *peer, afi_t afi, 
                 if (found_match)
                     break;
             }
-
             if (!found_match)
                 continue;
 
             /* Calculate path metrics */
             struct bgp_path_info *pi;
             for (pi = bgp_dest_get_bgp_path_info(dest); pi; pi = pi->next) {
-                if (CHECK_FLAG(pi->flags, BGP_PATH_MULTIPATH) ||
-				CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
-                    multi_path_count++;
-                if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED))
+                if (CHECK_FLAG(pi->flags, BGP_PATH_SELECTED)) {
                     best_path_selected = true;
+                    multi_path_count = bgp_path_info_mpath_count(pi);
+                }
                 prefix_path_count++;
             }
         }
