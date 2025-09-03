@@ -43,6 +43,29 @@ def print_ip_addr(field_val):
     return field_val
 
 
+def print_prefix_addr(field_val):
+    """
+    pretty print "struct prefix"
+    """
+    if field_val[0] == socket.AF_INET:
+        addr = [str(fv) for fv in field_val[8:12]]
+        return str(ipaddress.IPv4Address(".".join(addr)))
+
+    if field_val[0] == socket.AF_INET6:
+        tmp = "".join("%02x" % fb for fb in field_val[8:24])
+        addr = []
+        while tmp:
+            addr.append(tmp[:4])
+            tmp = tmp[4:]
+        addr = ":".join(addr)
+        return str(ipaddress.IPv6Address(addr))
+
+    if not field_val[0]:
+        return ""
+
+    return field_val
+
+
 def print_mac(field_val):
     """
     pretty print "u8 mac[6]"
@@ -106,6 +129,55 @@ def print_family_str(field_val):
     return cmd_str
 
 
+def location_bgp_session_state_change(field_val):
+    locations = {
+        1: "START_TIMER_EXPIRE",
+        2: "CONNECT_TIMER_EXPIRE",
+        3: "HOLDTIME_EXPIRE",
+        4: "ROUTEADV_TIMER_EXPIRE",
+        5: "DELAY_OPEN_TIMER_EXPIRE",
+        6: "BGP_OPEN_MSG_DELAYED",
+        7: "Unable to get Nbr's IP Addr, waiting..",
+        8: "Waiting for NHT, no path to Nbr present",
+        9: "FSM_HOLDTIME_EXPIRE",
+    }
+    return locations.get(field_val, f"UNKNOWN({field_val})")
+
+
+def bgp_status_to_string(field_val):
+    statuses = {
+        1: "Idle",
+        2: "Connect",
+        3: "Active",
+        4: "OpenSent",
+        5: "OpenConfirm",
+        6: "Established",
+        7: "Clearing",
+        8: "Deleted"
+    }
+    return statuses.get(field_val, f"UNKNOWN({field_val})")
+
+
+def bgp_event_to_string(field_val):
+    events = {
+        1: "BGP_Start",
+        2: "BGP_Stop",
+        3: "TCP_connection_open",
+        4: "TCP_connection_open_w_delay",
+        5: "TCP_connection_closed",
+        6: "TCP_connection_open_failed",
+        7: "TCP_fatal_error",
+        8: "ConnectRetry_timer_expired",
+        9: "Hold_Timer_expired",
+        10: "KeepAlive_timer_expired",
+        11: "DelayOpen_timer_expired",
+        12: "Receive_OPEN_message",
+        13: "Receive_KEEPALIVE_message",
+        14: "Receive_UPDATE_message",
+        15: "Receive_NOTIFICATION_message",
+        16: "Clearing_Completed"
+    }
+    return events.get(field_val, f"UNKNOWN({field_val})")
 ############################ common parsers - end #############################
 
 
@@ -311,9 +383,95 @@ def parse_frr_bgp_evpn_withdraw_type5(event):
     field_parsers = {"ip": print_ip_addr}
 
     parse_event(event, field_parsers)
-
-
 ############################ evpn parsers - end *#############################
+
+
+def parse_frr_bgp_session_state_change(event):
+    field_parsers = {
+        "location": location_bgp_session_state_change,
+        "old_status": bgp_status_to_string,
+        "new_status": bgp_status_to_string,
+        "event": bgp_event_to_string
+    }
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_connection_attempt(event):
+    field_parsers = {
+        "status": connection_status_to_string,
+        "current_status": bgp_status_to_string
+    }
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_fsm_event(event):
+    field_parsers = {
+        "event": bgp_event_to_string,
+        "current_status": bgp_status_to_string,
+        "next_status": bgp_status_to_string
+    }
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_ifp_oper(event):
+    field_parsers = {"location": lambda x: {
+        1: "Intf UP",
+        2: "Intf DOWN"
+    }.get(x, f"Unknown BGP IFP operation location {x}")}
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_bgp_zebra_route_notify_owner(event):
+    field_parsers = {
+        "route_status": zapi_route_note_to_string,
+        "dest_flags": parse_bgp_dest_flags,
+        "prefix": print_prefix_addr
+    }
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_bgp_zebra_process_local_ip_prefix_zrecv(event):
+    field_parsers = {"prefix": print_prefix_addr}
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_bgp_zebra_radv_operation(event):
+    field_parsers = {"location": lambda x: {
+        1: "Initiating",
+        2: "Terminating"
+    }.get(x, f"Unknown BGP zebra RADV operation location {x}")}
+    parse_event(event, field_parsers)
+
+def parse_frr_bgp_err_str(event):
+    field_parsers = {"location": lambda x: {
+        1: "failed in bgp_accept",
+        2: "failed in bgp_connect"
+    }.get(x, f"Unknown BGP error string location {x}")}
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_ug_create_delete(event):
+    field_parsers = {"operation": lambda x: {
+        1: "BGP update-group create",
+        2: "BGP update-group delete"
+    }.get(x, f"Unknown UG create/delete operation {x}")}
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_ug_subgroup_create_delete(event):
+    field_parsers = {"operation": lambda x: {
+        1: "BGP update-group subgroup create",
+        2: "BGP update-group subgroup delete"
+    }.get(x, f"Unknown UG subgroup create/delete operation {x}")}
+    parse_event(event, field_parsers)
+
+
+def parse_frr_bgp_ug_subgroup_add_remove_peer(event):
+    field_parsers = {"operation": lambda x: {
+        1: "BGP update-group subgroup add peer",
+        2: "BGP update-group subgroup remove peer"
+    }.get(x, f"Unknown UG subgroup add/remove peer operation {x}")}
+    parse_event(event, field_parsers)
 
 
 def main():

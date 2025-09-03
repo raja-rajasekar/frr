@@ -41,6 +41,7 @@
 #include "bgpd/bgp_route.h"
 #include "bgpd/bgp_filter.h"
 #include "bgpd/bgp_io.h"
+#include "bgpd/bgp_trace.h"
 
 /********************
  * PRIVATE FUNCTIONS
@@ -1080,6 +1081,7 @@ static struct update_group *update_group_create(struct peer_af *paf)
 	if (BGP_DEBUG(update_groups, UPDATE_GROUPS))
 		zlog_debug("create update group %" PRIu64, updgrp->id);
 
+	frrtrace(2, frr_bgp, ug_create_delete, 1, updgrp->id);
 	UPDGRP_GLOBAL_STAT(updgrp, updgrps_created) += 1;
 
 	conf_release(&tmp_conf, paf->afi, paf->safi);
@@ -1091,6 +1093,7 @@ static void update_group_delete(struct update_group *updgrp)
 	if (BGP_DEBUG(update_groups, UPDATE_GROUPS))
 		zlog_debug("delete update group %" PRIu64, updgrp->id);
 
+	frrtrace(2, frr_bgp, ug_create_delete, 2, updgrp->id);
 	UPDGRP_GLOBAL_STAT(updgrp, updgrps_deleted) += 1;
 
 	hash_release(updgrp->bgp->update_groups[updgrp->afid], updgrp);
@@ -1143,6 +1146,7 @@ update_subgroup_create(struct update_group *updgrp)
 		zlog_debug("create subgroup u%" PRIu64 ":s%" PRIu64, updgrp->id,
 			   subgrp->id);
 
+	frrtrace(3, frr_bgp, ug_subgroup_create_delete, 1, updgrp->id, subgrp->id);
 	update_group_add_subgroup(updgrp, subgrp);
 
 	UPDGRP_INCR_STAT(updgrp, subgrps_created);
@@ -1170,6 +1174,7 @@ static void update_subgroup_delete(struct update_subgroup *subgrp)
 		zlog_debug("delete subgroup u%" PRIu64 ":s%" PRIu64,
 			   subgrp->update_group->id, subgrp->id);
 
+	frrtrace(3, frr_bgp, ug_subgroup_create_delete, 2, subgrp->update_group->id, subgrp->id);
 	update_group_remove_subgroup(subgrp->update_group, subgrp);
 
 	XFREE(MTYPE_BGP_UPD_SUBGRP, subgrp);
@@ -1247,6 +1252,9 @@ static void update_subgroup_add_peer(struct update_subgroup *subgrp,
 	if (BGP_DEBUG(update_groups, UPDATE_GROUPS))
 		zlog_debug("peer %s added to subgroup s%" PRIu64,
 				paf->peer->host, subgrp->id);
+
+	frrtrace(7, frr_bgp, ug_subgroup_add_remove_peer, 1, paf->peer->host, paf->afi, paf->safi,
+		 paf->afid, subgrp->id, subgrp->peer_count);
 }
 
 /*
@@ -1276,6 +1284,9 @@ static void update_subgroup_remove_peer_internal(struct update_subgroup *subgrp,
 		zlog_debug("peer %s deleted from subgroup s%"
 			   PRIu64 " peer cnt %d",
 			   paf->peer->host, subgrp->id, subgrp->peer_count);
+
+	frrtrace(7, frr_bgp, ug_subgroup_add_remove_peer, 2, paf->peer->host, paf->afi, paf->safi,
+		 paf->afid, subgrp->id, subgrp->peer_count);
 	SUBGRP_INCR_STAT(subgrp, prune_events);
 }
 
@@ -1439,6 +1450,8 @@ static void update_subgroup_merge(struct update_subgroup *subgrp,
 			   target->update_group->id, target->id,
 			   reason ? reason : "unknown");
 
+	frrtrace(6, frr_bgp, ug_subgroup_merge, subgrp->update_group->id, subgrp->id, peer_count,
+		 target->update_group->id, target->id, reason ? reason : "unknown");
 	result = update_subgroup_check_delete(subgrp);
 	assert(result);
 }
@@ -1729,6 +1742,9 @@ static int updgrp_policy_update_walkcb(struct update_group *updgrp, void *arg)
 					"u%" PRIu64 ":s%" PRIu64" announcing routes upon policy %s (type %d) change",
 					updgrp->id, subgrp->id,
 					ctx->policy_name, ctx->policy_type);
+
+			frrtrace(5, frr_bgp, upd_announce_route_on_policy_change, 0, updgrp->id,
+				 subgrp->id, ctx->policy_name, ctx->policy_type);
 			subgroup_announce_route(subgrp);
 		}
 		if (def_changed) {
@@ -1737,6 +1753,9 @@ static int updgrp_policy_update_walkcb(struct update_group *updgrp, void *arg)
 					"u%" PRIu64 ":s%" PRIu64" announcing default upon default routemap %s change",
 					updgrp->id, subgrp->id,
 					ctx->policy_name);
+
+			frrtrace(5, frr_bgp, upd_announce_route_on_policy_change, 1, updgrp->id,
+				 subgrp->id, ctx->policy_name, ctx->policy_type);
 			if (route_map_lookup_by_name(ctx->policy_name)) {
 				/*
 				 * When there is change in routemap, this flow
@@ -1849,6 +1868,8 @@ void update_subgroup_split_peer(struct peer_af *paf,
 				   old_id, subgrp->id, paf->peer->host,
 				   updgrp->id, subgrp->id);
 
+		frrtrace(6, frr_bgp, ug_subgroup_split_peer, old_id, subgrp->id,
+			 old_subgrp->peer_count, paf->peer->host, updgrp->id, subgrp->id);
 		/*
 		 * The state of the subgroup (adj_out, advs, packet queue etc)
 		 * is consistent internally, but may not be identical to other
@@ -1883,6 +1904,9 @@ void update_subgroup_split_peer(struct peer_af *paf,
 			   paf->subgroup->update_group->id, paf->subgroup->id,
 			   paf->peer->host, updgrp->id, subgrp->id);
 
+	frrtrace(6, frr_bgp, ug_subgroup_split_peer, paf->subgroup->update_group->id,
+		 paf->subgroup->id, old_subgrp->peer_count, paf->peer->host, updgrp->id,
+		 subgrp->id);
 	SUBGRP_INCR_STAT(paf->subgroup, split_events);
 
 	/*
