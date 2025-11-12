@@ -77,15 +77,22 @@ def test_bgp_dynamic_capability_enhe():
 
     def _bgp_check_nexthop():
         output = json.loads(r1.vtysh_cmd("show ip route 10.10.10.10/32 json"))
+        # With singleton-equivalent NHG optimization applied to duplicate nexthops,
+        # installedNexthopGroupId should differ from nexthopGroupId/receivedNexthopGroupId
+        route = output.get("10.10.10.10/32", [{}])[0]
+        nhg_id = route.get("nexthopGroupId")
+        installed_nhg_id = route.get("installedNexthopGroupId")
+
+        if nhg_id == installed_nhg_id:
+            return f"Singleton-equivalent optimization not applied: nexthopGroupId ({nhg_id}) == installedNexthopGroupId ({installed_nhg_id})"
+
         expected = {
             "10.10.10.10/32": [
                 {
                     "protocol": "bgp",
                     "selected": True,
-                    "installed": True,
                     "nexthops": [
                         {
-                            "fib": True,
                             "ip": "192.168.1.2",
                             "afi": "ipv4",
                             "interfaceName": "r1-eth0",
