@@ -33,6 +33,8 @@ Test steps
 import os
 import sys
 import time
+import json
+import functools
 import pytest
 from copy import deepcopy
 
@@ -74,6 +76,7 @@ from lib.common_config import (
 
 # pylint: disable=C0413
 # Import topogen and topotest helpers
+from lib import topotest
 from lib.topogen import Topogen, get_topogen
 from lib.topojson import build_config_from_json
 from lib.topolog import logger
@@ -872,6 +875,105 @@ def test_bgp_with_loopback_interface(request):
     result = verify_bgp_convergence(tgen, topo)
     assert result is True, "Testcase {} :Failed \n Error: {}".format(tc_name, result)
 
+    write_test_footer(tc_name)
+
+
+def test_bgp_ipv6_nexthop_after_interface_flap(request):
+    tgen = get_topogen()
+    if BGP_CONVERGENCE is not True:
+        pytest.skip("skipped because of BGP Convergence failure")
+
+    tc_name = request.node.name
+    write_test_header(tc_name)
+    
+    step("Verify BGP IPv6 convergence before interface flap")
+    result = verify_bgp_convergence(tgen, topo, addr_type="ipv6")
+    assert result is True, "Testcase {} : Failed \n Error: {}".format(tc_name, result)
+    
+    r1 = tgen.gears["r1"]
+    r2 = tgen.gears["r2"]
+    
+    nexthop_before = r1.run('vtysh -c "show ip bgp vrf all neighbors" | grep Nexthop')
+    logger.info("=" * 60 + "\nBGP Nexthops BEFORE interface flap:\n" + "-" * 60 + "\n" + nexthop_before + "\n" + "=" * 60)
+    
+    ifaces_output = r1.run("ip -6 addr show | grep -B2 'fd00:' | grep '^[0-9]' | awk '{print $2}' | tr -d ':'")
+    interfaces = [iface.strip() for iface in ifaces_output.split('\n') if iface.strip() and iface.strip() != 'lo']
+    if not interfaces:
+        pytest.skip("Could not find interface with IPv6 address on r1")
+    
+    intf_name = interfaces[0]
+    logger.info("Using interface: {} for interface flap test".format(intf_name))
+    
+    ipv4_output = r1.run("ip -4 addr show {} | grep 'inet ' | awk '{{print $2}}'".format(intf_name))
+    ipv6_output = r1.run("ip -6 addr show {} | grep 'inet6' | grep -v 'fe80:' | awk '{{print $2}}'".format(intf_name))
+    
+    ipv4_addr = ipv4_output.strip() if ipv4_output.strip() else None
+    ipv6_addr = ipv6_output.strip() if ipv6_output.strip() else None
+    
+    logger.info("Interface {} has IPv4: {} IPv6: {}".format(intf_name, ipv4_addr, ipv6_addr))
+    
+    r1.run("ip link set {} down".format(intf_name))
+    
+    step("Simulate ifreload -a: flush addresses and reconfigure interface")
+    r1.run("ip addr flush dev {} scope global".format(intf_name))
+    if ipv4_addr:
+        r1.run("ip addr add {} dev {}".format(ipv4_addr, intf_name))
+        logger.info("Re-added IPv4 address: {}".format(ipv4_addr))
+    
+    if ipv6_addr:
+        r1.run("ip -6 addr add {} dev {}".format(ipv6_addr, intf_name))
+        logger.info("Re-added IPv6 address: {}".format(ipv6_addr))
+    r1.run("ip link set {} up".format(intf_name))
+    
+    step("Wait for BGP IPv6 to re-establish")
+    result = verify_bgp_convergence(tgen, topo, addr_type="ipv6")
+    assert result is True, "Testcase {} : BGP IPv6 did not reconverge after interface flap".format(tc_name)
+    
+    step("BGP nexthop status AFTER interface flap")
+    nexthop_after = r1.run('vtysh -c "show ip bgp vrf all neighbors" | grep Nexthop')
+    logger.info("=" * 60 + "\nBGP Nexthops AFTER interface flap:\n" + "-" * 60 + "\n" + nexthop_after + "\n" + "=" * 60)
+    
+    step("Verify IPv6 global next-hop is correctly set (not ::)")
+    
+    def _check_ipv6_nexthop_after():
+        output = r1.vtysh_cmd("show bgp neighbors")
+        
+        found_empty_nexthop = False
+        found_valid_nexthop = False
+        
+        for line in output.split('\n'):
+            if "Nexthop global:" in line:
+                parts = line.split("Nexthop global:")
+                if len(parts) > 1:
+                    nexthop = parts[1].strip()
+                    logger.info("Found Nexthop global: {}".format(nexthop))
+                    
+                    if nexthop == "::":
+                        logger.error("IPv6 global nexthop is :: after interface flap (BUG!)")
+                        found_empty_nexthop = True
+                    elif "fd00:" in nexthop or "2001:" in nexthop or "fe80:" in nexthop:
+                        logger.info("Found valid IPv6 nexthop: {}".format(nexthop))
+                        found_valid_nexthop = True
+        
+        if found_empty_nexthop:
+            logger.error("FAIL: Found :: nexthop after interface flap!")
+            return False
+        elif found_valid_nexthop:
+            logger.info("PASS: All nexthops are valid (no :: found)")
+            return True
+        else:
+            logger.warning("Could not find any 'Nexthop global:' in output")
+            return False
+    
+    test_func = functools.partial(_check_ipv6_nexthop_after)
+    _, result = topotest.run_and_expect(test_func, True, count=20, wait=3)
+    
+    if result is not True:
+        logger.error("TEST FAILED: IPv6 global nexthop became :: after interface flap!")
+    
+    assert result is True, "Testcase {} : IPv6 global nexthop became :: after interface flap (BUG!)".format(tc_name)
+    
+    logger.info("SUCCESS: IPv6 global nexthop maintained correctly after interface flap")
     write_test_footer(tc_name)
 
 
