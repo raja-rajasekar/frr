@@ -1350,6 +1350,118 @@ def test_bgp_summary_neighbor_state(tgen_and_ip_version):
         assert result is None, f"{rname} BGP did not converge: {result}"
 
 
+def test_router_id_change_with_advertise_svi_ip_ipv4(tgen_and_ip_version):
+    """Test router-id change with advertise-svi-ip on IPv4 underlay only"""
+    tgen, ip_version = tgen_and_ip_version
+    
+    # Skip if not IPv4 - this test is IPv4-only for now
+    if ip_version != "ipv4":
+        pytest.skip("Test only runs for IPv4 underlay")
+    
+    if tgen.routers_have_failure():
+        pytest.skip(tgen.errors)
+
+    logger.info("Testing router-id change with advertise-svi-ip on tor-21 (IPv4 underlay)")
+    
+    tor21 = tgen.gears["tor-21"]
+    
+    # IPv4 underlay configuration
+    loopback_ip = "10.0.0.99/32"
+    svi_ip = "192.168.11.21"
+    initial_vtep = "10.0.0.30"
+    new_vtep = "10.0.0.99"
+    
+    # Step 1: Add IP to loopback and enable advertise-svi-ip
+    logger.info(f"Configuring tor-21 with advertise-svi-ip (loopback: {loopback_ip})")
+    tor21.vtysh_multicmd(
+        f"""
+        configure terminal
+        interface lo
+         ip address {loopback_ip}
+        exit
+        router bgp 650030
+         address-family l2vpn evpn
+          advertise-svi-ip
+         exit-address-family
+        exit
+        """
+    )
+    
+    # Step 2: Wait for VNI to show SVI interface
+    def check_vni_svi_interface(router, vni):
+        output = router.vtysh_cmd(f"show evpn vni {vni} json", isjson=True)
+        if not output:
+            return f"VNI {vni} not found"
+        
+        # When querying specific VNI, output is the VNI data directly
+        svi_if = output.get("sviInterface")
+        
+        if not svi_if or "vlan111" not in svi_if.lower():
+            return f"SVI interface not vlan111: {svi_if}"
+        
+        return None
+    
+    logger.info("Waiting for VNI 1000111 to show SVI interface")
+    test_func = partial(check_vni_svi_interface, tor21, 1000111)
+    _, result = topotest.run_and_expect(test_func, None, count=20, wait=3)
+    assert result is None, f"VNI SVI check failed: {result}"
+    
+    # Step 3: Get the SVI IP type-2 route and verify initial nexthop
+    def check_type2_route_nexthop(router, vni, expected_ip, expected_nexthop):
+        output = router.vtysh_cmd(f"show bgp vni {vni} type 2 ip {expected_ip} json", isjson=True)
+        if not output:
+            return f"No output for VNI {vni} type 2 IP {expected_ip}"
+        
+        # When querying specific route, output is the route data directly
+        paths = output.get("paths", [])
+        actual_nexthop = paths[0][0].get("nexthops", [])[0].get("ip")
+        if actual_nexthop != expected_nexthop:
+            return f"Nexthop mismatch: expected {expected_nexthop}, got {actual_nexthop}"
+        
+        return None
+    
+    logger.info(f"Verifying initial nexthop is {initial_vtep} for SVI IP {svi_ip}")
+    test_func = partial(check_type2_route_nexthop, tor21, 1000111, svi_ip, initial_vtep)
+    _, result = topotest.run_and_expect(test_func, None, count=20, wait=3)
+    assert result is None, f"Initial nexthop check failed: {result}"
+    
+    # Step 4: Change router-id to 10.0.0.99
+    logger.info("Changing router-id to 10.0.0.99")
+    tor21.vtysh_multicmd(
+        """
+        configure terminal
+        router bgp 650030
+         bgp router-id 10.0.0.99
+        exit
+        """
+    )
+    
+    # Step 5: Verify nexthop updated to new VTEP
+    logger.info(f"Verifying nexthop updated to {new_vtep}")
+    test_func = partial(check_type2_route_nexthop, tor21, 1000111, svi_ip, new_vtep)
+    _, result = topotest.run_and_expect(test_func, None, count=20, wait=3)
+    assert result is None, f"Updated nexthop check failed: {result}"
+    
+    # Step 6: Revert configuration
+    logger.info("Reverting configuration to original state")
+    tor21.vtysh_multicmd(
+        f"""
+        configure terminal
+        router bgp 650030
+         bgp router-id 10.0.0.30
+         address-family l2vpn evpn
+          no advertise-svi-ip
+         exit-address-family
+        exit
+        interface lo
+         no ip address {loopback_ip}
+        exit
+        """
+    )
+    
+    logger.info("Router-id change with advertise-svi-ip test completed successfully (IPv4)")
+
+
 def test_evpn_routes_advertised(tgen_and_ip_version):
     """
     Check that EVPN routes are advertised on all VTEPs
